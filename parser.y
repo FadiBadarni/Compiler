@@ -18,6 +18,7 @@
     int yyerror(const char *e);
 
     int printlevel=0;
+    node *root;
 %}
 
 %union
@@ -27,8 +28,11 @@
 }
 
 %token <string> DIVISION PLUS MINUS MULTI IDENTIFIER
+%token <string> CHAR INT REAL STRING VAR ASSIGNMENT SEMICOLON COLON
+%token <string> TYPE
 
-%type <node> expression
+%type <node> statement expression
+%type <node> program
 
 %left PLUS MINUS
 %left MULTI DIVISION
@@ -38,16 +42,29 @@
 %%
 
 // Start symbol
-program: expression { printTree ($1); };
+program:
+    /* empty */
+    | program statement { root = $2; printTree(root); }
+    ;
+
+statement:
+    VAR IDENTIFIER COLON TYPE SEMICOLON { $$ = createNode("declare", createNode($2, NULL, NULL), createNode($4, NULL, NULL)); } // handle variable declaration
+    | IDENTIFIER ASSIGNMENT expression SEMICOLON { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
+    ;
 
 expression:
     IDENTIFIER { $$ = createNode($1, NULL, NULL); }  // Terminal: IDENTIFIER
+    | CHAR { $$ = createNode($1, NULL, NULL); }  // Terminal: CHAR
+    | INT { $$ = createNode($1, NULL, NULL); }  // Terminal: INT
+    | REAL { $$ = createNode($1, NULL, NULL); }  // Terminal: REAL
+    | STRING { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING
     | expression PLUS expression     { $$ = createNode("+", $1, $3); }
     | expression MINUS expression    { $$ = createNode("-", $1, $3); }
     | expression MULTI expression    { $$ = createNode("*", $1, $3); }
     | expression DIVISION expression { $$ = createNode("/", $1, $3); }
-    | '(' expression ')'       { $$ = $2; }
+    | '(' expression ')'             { $$ = $2; }
     ;
+
 %%
 
 node* createNode(char* token, node *left, node *right)
