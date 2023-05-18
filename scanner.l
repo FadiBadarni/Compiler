@@ -11,6 +11,10 @@
 "real"      { yylval.string = strdup(yytext); printf("Returning TYPE: %s\n", yytext); return TYPE; }
 "string"    { yylval.string = strdup(yytext); printf("Returning TYPE: %s\n", yytext); return TYPE; }
 
+"procedure" { yylval.string = strdup(yytext); printf("Returning PROCEDURE: %s\n", yytext); return PROCEDURE; }
+"function"  { yylval.string = strdup(yytext); printf("Returning FUNCTION: %s\n", yytext); return FUNCTION; }
+"main"      { yylval.string = strdup(yytext); printf("Returning MAIN: %s\n", yytext); return MAIN; }
+
 "var"       { yylval.string = strdup(yytext); printf("Returning VAR: %s\n", yytext); return VAR; }
 
  /*Operator Lexemes*/
@@ -21,6 +25,10 @@
 "="         { printf("Returning ASSIGNMENT: %s\n", yytext); return ASSIGNMENT;}
 ";"         { printf("Returning SEMICOLON: %s\n", yytext); return SEMICOLON;}
 ":"         { printf("Returning COLON: %s\n", yytext); return COLON;}
+"("         { printf("Returning LPAREN: %s\n", yytext); return LPAREN;}
+")"         { printf("Returning RPAREN: %s\n", yytext); return RPAREN;}
+"{"         { printf("Returning LBRACE: %s\n", yytext); return LBRACE;}
+"}"         { printf("Returning RBRACE: %s\n", yytext); return RBRACE;}
 
  /*Literal Lexemes*/
 [a-zA-Z][a-zA-Z0-9_]*   { yylval.string= strdup(yytext); printf("Returning IDENTIFIER: %s\n", yytext); return IDENTIFIER;}

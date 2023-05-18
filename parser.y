@@ -29,9 +29,11 @@
 
 %token <string> DIVISION PLUS MINUS MULTI IDENTIFIER
 %token <string> CHAR INT REAL STRING VAR ASSIGNMENT SEMICOLON COLON
-%token <string> TYPE
+%token <string> TYPE FUNCTION PROCEDURE MAIN
+%token LPAREN RPAREN LBRACE RBRACE
 
-%type <node> statement expression
+%type <node> statement statements_list expression
+%type <node> function procedure main arguments arguments_list argument
 %type <node> program
 
 %left PLUS MINUS
@@ -44,13 +46,52 @@
 // Start symbol
 program:
     /* empty */
-    | program statement { root = $2; printTree(root); }
+    | program function { root = $2; printTree(root); }
+    ;
+
+function:
+    procedure
+    | main
+    ;
+
+main:
+    FUNCTION MAIN LPAREN RPAREN COLON TYPE LBRACE statements_list RBRACE
+        { $$ = createNode("function", createNode($2, NULL, NULL), $8); }
+    ;
+
+procedure:
+    PROCEDURE IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE statements_list RBRACE
+        { $$ = createNode("procedure", createNode($2, NULL, $4), $9); }
+    ;
+
+
+arguments:
+    /* empty */ { $$ = createNode("arguments_none", NULL, NULL); }
+    | arguments_list { $$ = $1; }
+    ;
+
+arguments_list:
+    argument
+    | arguments_list SEMICOLON argument { $$ = createNode("arguments_list", $1, $3); }
+    ;
+
+argument:
+    IDENTIFIER COLON TYPE { $$ = createNode("argument", createNode($1, NULL, NULL), createNode($3, NULL, NULL)); }
+    ;
+
+
+statements_list:
+    statement
+    | statements_list statement { $$ = createNode("statements_list", $1, $2); }
     ;
 
 statement:
-    VAR IDENTIFIER COLON TYPE SEMICOLON { $$ = createNode("declare", createNode($2, NULL, NULL), createNode($4, NULL, NULL)); } // handle variable declaration
-    | IDENTIFIER ASSIGNMENT expression SEMICOLON { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
+    VAR IDENTIFIER COLON TYPE SEMICOLON
+        { $$ = createNode("declare", createNode($2, NULL, NULL), createNode($4, NULL, NULL)); } // handle variable declaration
+    | IDENTIFIER ASSIGNMENT expression SEMICOLON
+        { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
     ;
+
 
 expression:
     IDENTIFIER { $$ = createNode($1, NULL, NULL); }  // Terminal: IDENTIFIER
