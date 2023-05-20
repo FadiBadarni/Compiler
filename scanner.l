@@ -6,10 +6,15 @@
 %%
 
  /*Keywords Lexemes*/
+"bool"      { yylval.string = strdup(yytext); printf("Returning TYPE: %s\n", yytext); return TYPE; }
 "char"      { yylval.string = strdup(yytext); printf("Returning TYPE: %s\n", yytext); return TYPE; }
 "int"       { yylval.string = strdup(yytext); printf("Returning TYPE: %s\n", yytext); return TYPE; }
 "real"      { yylval.string = strdup(yytext); printf("Returning TYPE: %s\n", yytext); return TYPE; }
 "string"    { yylval.string = strdup(yytext); printf("Returning TYPE: %s\n", yytext); return TYPE; }
+"char*"      { yylval.string = strdup(yytext); printf("Returning POINTER_TYPE: %s\n", yytext); return POINTER_TYPE; }
+"int*"       { yylval.string = strdup(yytext); printf("Returning POINTER_TYPE: %s\n", yytext); return POINTER_TYPE; }
+"real*"      { yylval.string = strdup(yytext); printf("Returning POINTER_TYPE: %s\n", yytext); return POINTER_TYPE; }
+
 "null"      { yylval.string = strdup(yytext); printf("Returning NULL: %s\n", yytext); return NULL_PTR; }
 
 "procedure" { yylval.string = strdup(yytext); printf("Returning PROCEDURE: %s\n", yytext); return PROCEDURE; }
@@ -17,6 +22,8 @@
 "main"      { yylval.string = strdup(yytext); printf("Returning MAIN: %s\n", yytext); return MAIN; }
 
 "var"       { yylval.string = strdup(yytext); printf("Returning VAR: %s\n", yytext); return VAR; }
+"if"       { yylval.string = strdup(yytext); printf("Returning IF: %s\n", yytext); return IF; }
+"else"       { yylval.string = strdup(yytext); printf("Returning ELSE: %s\n", yytext); return ELSE; }
 
  /*Operator Lexemes*/
 "/"         { printf("Returning DIVISION: %s\n", yytext); return DIVISION;}
@@ -32,14 +39,13 @@
 "}"         { printf("Returning RBRACE: %s\n", yytext); return RBRACE;}
 "&"         { printf("Returning ADDRESS: %s\n", yytext); return ADDRESS; }
 "->"        { printf("Returning ARROW: %s\n", yytext); return ARROW; }
-","        { printf("Returning COMMA: %s\n", yytext); return COMMA; }
+","         { printf("Returning COMMA: %s\n", yytext); return COMMA; }
 
  /*Literal Lexemes*/
 [a-zA-Z][a-zA-Z0-9_]*   { yylval.string= strdup(yytext); printf("Returning IDENTIFIER: %s\n", yytext); return IDENTIFIER;}
 [0-9]+                  { yylval.string = strdup(yytext); printf("Returning INT_LITERAL: %s\n", yytext); return INT_LITERAL; }
 \"([^"])*\"             { yylval.string = strdup(yytext); printf("Returning STRING_LITERAL: %s\n", yytext); return STRING_LITERAL; }
 \'(.)\'                 { yylval.string = strdup(yytext); printf("Returning CHAR_LITERAL: %s\n", yytext); return CHAR_LITERAL; }
-[a-zA-Z]+[*]            { yylval.string= strdup(yytext); printf("Returning POINTER_TYPE: %s\n", yytext); return POINTER_TYPE;}
 
  /*Skip Whitespace, Enter, Tab*/
 [\n]                    {yylineno++;}
