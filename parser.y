@@ -29,25 +29,29 @@
 
 
 %token <string> DIVISION PLUS MINUS MULTI IDENTIFIER
+%token <string> AND OR EQUALS
 %token <string> INT_LITERAL CHAR_LITERAL STRING_LITERAL
-%token <string> CHAR INT REAL STRING BOOL
+%token <string> CHAR INT REAL STRING BOOL VOID
 %token <string> VAR ASSIGNMENT SEMICOLON COLON ARROW COMMA
-%token <string> TYPE FUNCTION PROCEDURE MAIN
+%token <string> TYPE FUNCTION MAIN RETURN
 %token <string> NULL_PTR POINTER_TYPE ADDRESS
-%token <string> IF ELSE WHILE FOR
+%token <string> IF ELSE WHILE DO FOR
+%token <string> GT GTE LT LTE NOT NEQ
 
 %token LPAREN RPAREN LBRACE RBRACE
 
 %type <node> statement statements_list expression
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list
 %type <node> program
-%type <node> if_statement
+%type <node> if_statement while_statement do_while_statement for_statement
 
+%left OR
+%left AND
+%left NEQ EQUALS
+%left LT GT LTE GTE
+%right NOT
 %left PLUS MINUS
 %left MULTI DIVISION
-
-%nonassoc IDENTIFIER
-%nonassoc ADDRESS
 
 %%
 
@@ -57,15 +61,15 @@ program:
     ;
 
 subroutines:
-    /* empty */ { $$ = NULL; }
+    { $$ = NULL; }
     | subroutines subroutine { $$ = createNode("subroutines", $1, $2); }
     ;
 
 subroutine:
     FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE statements_list RBRACE
         { $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), $9); }
-    | PROCEDURE IDENTIFIER LPAREN arguments RPAREN LBRACE statements_list RBRACE
-        { $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), $7); }
+    | FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON VOID LBRACE statements_list RBRACE
+        { $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), $9); }
     ;
 
 main:
@@ -74,7 +78,7 @@ main:
     ;
 
 arguments:
-    /* empty */ { $$ = createNode("arguments_none", NULL, NULL); }
+    { $$ = createNode("arguments_none", NULL, NULL); }
     | arguments_list { $$ = $1; }
     ;
 
@@ -89,8 +93,6 @@ arguments_list:
         $$ = $1;
     }
     ;
-
-
 
 argument:
     IDENTIFIER ARROW identifiers_list COLON TYPE
@@ -109,22 +111,6 @@ identifiers_list:
       }
     ;
 
-if_statement:
-    IF LPAREN expression RPAREN LBRACE statement RBRACE
-    {
-        $$ = createNode("if", $3, createNode("body", $6, NULL));
-    }
-    | IF LPAREN expression RPAREN LBRACE statement RBRACE ELSE LBRACE statement RBRACE
-    {
-        node* if_body_node = createNode("if_body", $6, NULL);
-        node* else_body_node = createNode("else_body", $10, NULL);
-        $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
-    }
-    ;
-
-
-
-
 statements_list:
     statement
     | statements_list statement { $$ = createNode("statements_list", $1, $2); }
@@ -137,27 +123,88 @@ statement:
         { $$ = createNode("declare", createNode($2, NULL, NULL), createNode($4, NULL, NULL)); } // handle variable declaration
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
+    | RETURN expression SEMICOLON
+        { $$ = createNode("return", $2, NULL); } // handle return statement
     | if_statement
+    | while_statement
+    | do_while_statement
+    | for_statement
+    ;
+
+if_statement:
+    IF LPAREN expression RPAREN LBRACE statements_list RBRACE ELSE LBRACE statements_list RBRACE
+    {
+        node* if_body_node = createNode("if_body", $6, NULL);
+        node* else_body_node = createNode("else_body", $10, NULL);
+        $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
+    }
+    | IF LPAREN expression RPAREN LBRACE statements_list RBRACE
+    {
+        $$ = createNode("if", $3, createNode("if_body", $6, NULL));
+    }
+    ;
+
+while_statement:
+    WHILE LPAREN expression RPAREN LBRACE statements_list RBRACE
+    {
+        $$ = createNode("while", $3, createNode("body", $6, NULL));
+    }
+    | WHILE LPAREN expression RPAREN statement
+    {
+        $$ = createNode("while", $3, $5);
+    }
+    ;
+
+do_while_statement:
+    DO LBRACE statements_list RBRACE WHILE LPAREN expression RPAREN SEMICOLON
+    {
+        $$ = createNode("do_while", $3, $7);
+    }
+    | DO statement WHILE LPAREN expression RPAREN SEMICOLON
+    {
+        $$ = createNode("do_while", $2, $5);
+    }
+    ;
+
+for_statement:
+    FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN LBRACE statements_list RBRACE
+    {
+        node* initialization = $3;
+        node* condition = $5;
+        node* increment = $7;
+        node* body = $10;
+        $$ = createNode("for", initialization, createNode("for_body", condition, createNode("for_increment", increment, body)));
+    }
     ;
 
 expression:
-    IDENTIFIER { $$ = createNode($1, NULL, NULL); }  // Terminal: IDENTIFIER
-    | INT_LITERAL { $$ = createNode($1, NULL, NULL); }  // Terminal: INT_LITERAL
-    | CHAR_LITERAL { $$ = createNode($1, NULL, NULL); }  // Terminal: CHAR_LITERAL
-    | STRING_LITERAL { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING_LITERAL
-    | CHAR { $$ = createNode($1, NULL, NULL); }  // Terminal: CHAR
-    | INT { $$ = createNode($1, NULL, NULL); }  // Terminal: INT
-    | REAL { $$ = createNode($1, NULL, NULL); }  // Terminal: REAL
-    | STRING { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING
-    | BOOL { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING
-    | NULL_PTR { $$ = createNode("null", NULL, NULL); }  // Terminal: NULL_PTR
-    | POINTER_TYPE { $$ = createNode($1, NULL, NULL); }  // Terminal: POINTER_TYPE
-    | '*' IDENTIFIER { $$ = createNode("*", createNode($2, NULL, NULL), NULL); }  // Terminal: dereference pointer
-    | '&' IDENTIFIER { $$ = createNode("&", createNode($2, NULL, NULL), NULL); }  // Terminal: address of variable
+    IDENTIFIER                       { $$ = createNode($1, NULL, NULL); }  // Terminal: IDENTIFIER
+    | INT_LITERAL                    { $$ = createNode($1, NULL, NULL); }  // Terminal: INT_LITERAL
+    | CHAR_LITERAL                   { $$ = createNode($1, NULL, NULL); }  // Terminal: CHAR_LITERAL
+    | STRING_LITERAL                 { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING_LITERAL
+    | CHAR                           { $$ = createNode($1, NULL, NULL); }  // Terminal: CHAR
+    | INT                            { $$ = createNode($1, NULL, NULL); }  // Terminal: INT
+    | REAL                           { $$ = createNode($1, NULL, NULL); }  // Terminal: REAL
+    | STRING                         { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING
+    | BOOL                           { $$ = createNode($1, NULL, NULL); }  // Terminal: BOOL
+    | VOID                           { $$ = createNode($1, NULL, NULL); }  // Terminal: VOID
+    | NULL_PTR                       { $$ = createNode("null", NULL, NULL); }  // Terminal: NULL_PTR
+    | POINTER_TYPE                   { $$ = createNode($1, NULL, NULL); }  // Terminal: POINTER_TYPE
+    | '*' IDENTIFIER                 { $$ = createNode("*", createNode($2, NULL, NULL), NULL); }  // Terminal: dereference pointer
+    | '&' IDENTIFIER                 { $$ = createNode("&", createNode($2, NULL, NULL), NULL); }  // Terminal: address of variable
     | expression PLUS expression     { $$ = createNode("+", $1, $3); }
     | expression MINUS expression    { $$ = createNode("-", $1, $3); }
     | expression MULTI expression    { $$ = createNode("*", $1, $3); }
     | expression DIVISION expression { $$ = createNode("/", $1, $3); }
+    | expression AND expression      { $$ = createNode("&&", $1, $3); }
+    | expression OR expression       { $$ = createNode("||", $1, $3); }
+    | expression EQUALS expression   { $$ = createNode("==", $1, $3); }
+    | expression NEQ expression      { $$ = createNode("!=", $1, $3); }
+    | expression LT expression       { $$ = createNode("<", $1, $3); }
+    | expression GT expression       { $$ = createNode(">", $1, $3); }
+    | expression LTE expression      { $$ = createNode("<=", $1, $3); }
+    | expression GTE expression      { $$ = createNode(">=", $1, $3); }
+    | NOT expression                 { $$ = createNode("!", $2, NULL); }
     | '(' expression ')'             { $$ = $2; }
     ;
 
