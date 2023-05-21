@@ -40,7 +40,7 @@
 
 %token LPAREN RPAREN LBRACE RBRACE
 
-%type <node> statement statements_list expression function_call
+%type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list
 %type <node> program
 %type <node> code_block if_statement while_statement do_while_statement for_statement
@@ -52,6 +52,8 @@
 %right NOT
 %left PLUS MINUS
 %left MULTI DIVISION
+
+%nonassoc ASSIGNMENT
 
 %%
 
@@ -69,9 +71,9 @@ subroutines:
 /* A subroutine can either be a function, which returns a specific type, or a procedure, which does not return anything. */
 subroutine:
     FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE statements_list RBRACE
-        { $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), $9); }
+        { $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $9, NULL)); }
     | FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON VOID LBRACE statements_list RBRACE
-        { $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), $9); }
+        { $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $9, NULL)); }
     ;
 
 /* The main function of the program. */
@@ -84,21 +86,15 @@ main:
 
 /* Represents the list of arguments in a function or procedure definition. If there are no arguments, a 'none' argument node is created. */
 arguments:
-    { $$ = createNode("arguments_none", NULL, NULL); }  // No arguments.
-    | arguments_list { $$ = $1; }  // One or more arguments.
+    /* No arguments. */
+    { $$ = createNode("arguments_none", NULL, NULL); }
+    | arguments_list { $$ = $1; }  /* One or more arguments. */
     ;
 
 /* Used to parse the list of arguments. */
 arguments_list:
-    argument { $$ = createNode("arguments_list", $1, NULL); }
-    | arguments_list SEMICOLON argument {
-        node* current = $1;
-        while(current->right != NULL) {
-            current = current->right;
-        }
-        current->right = createNode("argument", $3, NULL);
-        $$ = $1;
-    }
+    argument { $$ = createNode("arguments_list", $1, NULL); } /* Single argument */
+    | arguments_list SEMICOLON argument { $$ = createNode("arguments_list", $1, $3); } /* Multiple arguments */
     ;
 
 /* Used to parse individual arguments. */
@@ -107,15 +103,15 @@ argument:
         { $$ = createNode("argument", createNode($5, NULL, NULL), $3); }
     ;
 
+
 /* Used to parse lists of identifiers, separated by commas. */
 identifiers_list:
     IDENTIFIER { $$ = createNode(strdup($1), NULL, NULL); }
-    | identifiers_list COMMA IDENTIFIER {
-        char* new_identifier = malloc(strlen($1->token) + strlen($3) + 2);  // for the space and the null terminator
-        strcpy(new_identifier, $1->token);
+    | IDENTIFIER COMMA identifiers_list {
+        char* new_identifier = malloc(strlen($1) + strlen($3->token) + 2);  // for the space and the null terminator
+        strcpy(new_identifier, $1);
         strcat(new_identifier, " ");
-        strcat(new_identifier, $3);
-        free($1->token);  // free the old identifier list
+        strcat(new_identifier, $3->token);
         $$ = createNode(new_identifier, NULL, NULL);
       }
     ;
@@ -128,19 +124,27 @@ statements_list:
 
 /* non-terminal for a function call. */
 function_call:
-    IDENTIFIER LPAREN RPAREN { $$ = createNode("call", createNode($1, NULL, NULL), NULL); }
-    ;
+    IDENTIFIER LPAREN RPAREN { $$ = createNode("call", createNode($1, NULL, NULL), NULL); } // handle function call without arguments
+    | IDENTIFIER LPAREN function_call_arguments RPAREN { $$ = createNode("call", createNode($1, createNode("arguments", $3, NULL), NULL), NULL); } // handle function call with arguments
+;
+
+
+function_call_arguments:
+    expression { $$ = createNode("argument", $1, NULL); } // single argument
+    | function_call_arguments COMMA expression { $$ = createNode("arguments", $1, createNode("argument", $3, NULL)); } // multiple arguments
+;
+
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
 statement:
-    VAR IDENTIFIER ASSIGNMENT expression COLON POINTER_TYPE SEMICOLON
-        { $$ = createNode("declare_initialize_pointer", createNode($2, NULL, NULL), createNode("declare_initialize_data", $4, createNode($6, NULL, NULL))); } // handle pointer variable declaration with initialization
-    | VAR IDENTIFIER ASSIGNMENT expression COLON TYPE SEMICOLON
-        { $$ = createNode("declare_initialize", createNode($2, NULL, NULL), createNode("declare_initialize_data", $4, createNode($6, NULL, NULL))); } // handle variable declaration with initialization
-    | VAR IDENTIFIER COLON POINTER_TYPE SEMICOLON
-        { $$ = createNode("declare_pointer", createNode($2, NULL, NULL), createNode($4, NULL, NULL)); } // handle pointer variable declaration
-    | VAR IDENTIFIER COLON TYPE SEMICOLON
-        { $$ = createNode("declare", createNode($2, NULL, NULL), createNode($4, NULL, NULL)); } // handle variable declaration
+    VAR identifiers_list ASSIGNMENT expression COLON POINTER_TYPE SEMICOLON
+        { $$ = createNode("declare_initialize_pointer", $2, createNode("declare_initialize_data", $4, createNode($6, NULL, NULL))); } // handle pointer variable declaration with initialization
+    | VAR identifiers_list ASSIGNMENT expression COLON TYPE SEMICOLON
+        { $$ = createNode("declare_initialize", $2, createNode("declare_initialize_data", $4, createNode($6, NULL, NULL))); } // handle variable declaration with initialization
+    | VAR identifiers_list COLON POINTER_TYPE SEMICOLON
+        { $$ = createNode("declare_pointer", $2, createNode($4, NULL, NULL)); } // handle pointer variable declaration
+    | VAR identifiers_list COLON TYPE SEMICOLON
+        { $$ = createNode("declare", $2, createNode($4, NULL, NULL)); } // handle variable declaration
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
     | TYPE IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
@@ -153,13 +157,14 @@ statement:
         { $$ = createNode("return", $2, NULL); } // handle return statement
     | subroutine
         { $$ = createNode("nested_function", $1, NULL); } // handle nested function
-    | expression
+    | function_call SEMICOLON
     | code_block
     | if_statement
     | while_statement
     | do_while_statement
     | for_statement
     ;
+
 
 code_block:
     LBRACE statements_list RBRACE { $$ = createNode("block", $2, NULL); }
@@ -239,9 +244,7 @@ expression:
         { $$ = createNode("null", NULL, NULL); }  // Terminal: NULL_PTR
     | POINTER_TYPE
         { $$ = createNode($1, NULL, NULL); }  // Terminal: POINTER_TYPE
-    | '*' IDENTIFIER
-        { $$ = createNode("*", createNode($2, NULL, NULL), NULL); }  // Terminal: dereference pointer
-    | '&' IDENTIFIER
+    | ADDRESS IDENTIFIER
         { $$ = createNode("&", createNode($2, NULL, NULL), NULL); }  // Terminal: address of variable
     | PIPE IDENTIFIER PIPE
         { $$ = createNode("length_of", createNode($2, NULL, NULL), NULL); }  // Retrieve the length of a string
@@ -321,6 +324,13 @@ void printTree(node *tree)
 
     // If this is the "arguments" node, don't print it and just continue with the children
     if (strcmp(tree->token, "arguments") == 0) {
+        printTree(tree->left);
+        printTree(tree->right);
+        return;
+    }
+
+    // If this is the "arguments_list" node, don't print it and just continue with the children
+    if (strcmp(tree->token, "arguments_list") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
