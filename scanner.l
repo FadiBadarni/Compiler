@@ -3,6 +3,8 @@
 #include "y.tab.h"
 %}
 
+%x COMMENT
+
 %%
 
  /*Keywords Lexemes*/
@@ -27,21 +29,58 @@
 "do"            { yylval.string = strdup(yytext); printf("Returning DO: %s\n", yytext); return DO; }
 
  /*Operator Lexemes*/
-"/"         { printf("Returning DIVISION: %s\n", yytext); return DIVISION;}
-"-"         { printf("Returning MINUS: %s\n", yytext); return MINUS;}
-"+"         { printf("Returning PLUS: %s\n", yytext); return PLUS;}
-"*"         { printf("Returning MULTI: %s\n", yytext); return MULTI;}
-"="         { printf("Returning ASSIGNMENT: %s\n", yytext); return ASSIGNMENT;}
 "&&"        { printf("Returning AND: %s\n", yytext); return AND;}
-"||"        { printf("Returning OR: %s\n", yytext); return OR;}
+"/"         { printf("Returning DIVISION: %s\n", yytext); return DIVISION;}
+"="         { printf("Returning ASSIGNMENT: %s\n", yytext); return ASSIGNMENT;}
 "=="        { printf("Returning EQUALS: %s\n", yytext); return EQUALS;}
-"&"         { printf("Returning ADDRESS: %s\n", yytext); return ADDRESS; }
 ">"         { printf("Returning GT: %s\n", yytext); return GT;}
 ">="        { printf("Returning GTE: %s\n", yytext); return GTE;}
 "<"         { printf("Returning LT: %s\n", yytext); return LT;}
 "<="        { printf("Returning LTE: %s\n", yytext); return LTE;}
+"-"         { printf("Returning MINUS: %s\n", yytext); return MINUS;}
 "!"         { printf("Returning NOT: %s\n", yytext); return NOT;}
 "!="        { printf("Returning NEQ: %s\n", yytext); return NEQ;}
+"||"        { printf("Returning OR: %s\n", yytext); return OR;}
+"+"         { printf("Returning PLUS: %s\n", yytext); return PLUS;}
+"*"         { printf("Returning MULTI: %s\n", yytext); return MULTI;}
+"&"         { printf("Returning ADDRESS: %s\n", yytext); return ADDRESS; }
+
+ /*Literal Lexemes*/
+ "true"                  {
+    yylval.string = strdup(yytext);
+    printf("Returning BOOL_LITERAL: %s\n", yytext);
+    return BOOL_LITERAL;
+}
+"false"                 {
+    yylval.string = strdup(yytext);
+    printf("Returning BOOL_LITERAL: %s\n", yytext);
+    return BOOL_LITERAL;
+}
+[a-zA-Z][a-zA-Z0-9_]*   {
+    yylval.string = strdup(yytext);
+    printf("Returning IDENTIFIER: %s\n", yytext);
+    return IDENTIFIER;
+}
+[0-9]+                  {
+    yylval.string = strdup(yytext);
+    printf("Returning INT_LITERAL: %s\n", yytext);
+    return INT_LITERAL;
+}
+[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)? {
+    yylval.string = strdup(yytext);
+    printf("Returning REAL_LITERAL: %s\n", yytext);
+    return REAL_LITERAL;
+}
+\"([^"])*\"             {
+    yylval.string = strdup(yytext);
+    printf("Returning STRING_LITERAL: %s\n", yytext);
+    return STRING_LITERAL;
+}
+\'(.)\'                 {
+    yylval.string = strdup(yytext);
+    printf("Returning CHAR_LITERAL: %s\n", yytext);
+    return CHAR_LITERAL;
+}
 
  /*Other Lexemes*/
 ";"         { printf("Returning SEMICOLON: %s\n", yytext); return SEMICOLON;}
@@ -52,12 +91,14 @@
 "}"         { printf("Returning RBRACE: %s\n", yytext); return RBRACE;}
 ","         { printf("Returning COMMA: %s\n", yytext); return COMMA; }
 "->"        { printf("Returning ARROW: %s\n", yytext); return ARROW; }
+"|"         { printf("Returning PIPE: %s\n", yytext); return PIPE;}
+"["         { printf("Returning LBRACKET: %s\n", yytext); return LBRACKET;}
+"]"         { printf("Returning RBRACKET: %s\n", yytext); return RBRACKET;}
 
- /*Literal Lexemes*/
-[a-zA-Z][a-zA-Z0-9_]*   { yylval.string= strdup(yytext); printf("Returning IDENTIFIER: %s\n", yytext); return IDENTIFIER;}
-[0-9]+                  { yylval.string = strdup(yytext); printf("Returning INT_LITERAL: %s\n", yytext); return INT_LITERAL; }
-\"([^"])*\"             { yylval.string = strdup(yytext); printf("Returning STRING_LITERAL: %s\n", yytext); return STRING_LITERAL; }
-\'(.)\'                 { yylval.string = strdup(yytext); printf("Returning CHAR_LITERAL: %s\n", yytext); return CHAR_LITERAL; }
+ /*Comments */
+"/*"      BEGIN(COMMENT);
+<COMMENT>"*/"     BEGIN(INITIAL);
+<COMMENT>.|\n     ; /* eat up anything (including newlines) within the comments */
 
  /*Skip Whitespace, Enter, Tab*/
 [\n]                    {yylineno++;}
