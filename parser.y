@@ -12,41 +12,14 @@
         struct node *right;
     } node;
 
-    typedef struct Symbol {
-    char *name;
-    char *type;
-    union {
-        int intValue;
-        double realValue;
-        char* strValue;
-        char charValue;
-        int boolValue;
-    } value;
-    struct Symbol *next;
-    } Symbol;
-
-    typedef struct SymbolTableNode {
-    Symbol *table;
-    struct SymbolTableNode *next;
-    } SymbolTableNode;
-
     node* createNode(char* token, node *left, node *right);
     void printTree (node *tree);
     void indent(int n);
     int yylex();
     int yyerror(const char *e);
-    Symbol* get_symbol(char *name);
-    Symbol* put_symbol(char *name, char *type);
-    void push_symbol_table();
-    void pop_symbol_table();
+
     int printlevel=0;
     node *root;
-
-    Symbol *symbol_table = NULL;
-    SymbolTableNode *symbol_table_stack = NULL;
-
-    // Variable to store the error message.
-    char* error_message = NULL;
 %}
 
 %union
@@ -101,25 +74,11 @@ subroutines:
 
 /* A subroutine can either be a function, which returns a specific type, or a procedure, which does not return anything. */
 subroutine:
-    FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE { push_symbol_table(); } statements_list RBRACE
-        {
-            Symbol* functionSymbol = put_symbol($2, $7);
-            if (functionSymbol == NULL) {
-                yyerror(NULL); // Print error message
-                YYERROR; // Terminate parsing
-            }
-            $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("function_body", $10, NULL));
-        }
-    | FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON VOID LBRACE { push_symbol_table(); } statements_list RBRACE
-        {
-            Symbol* procedureSymbol = put_symbol($2, $7);
-            if (procedureSymbol == NULL)
-                YYERROR; // Duplicate symbol, terminate parsing
-            $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("function_body", $10, NULL));
-        }
+    FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE statements_list RBRACE
+        { $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $9, NULL)); }
+    | FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON VOID LBRACE statements_list RBRACE
+        { $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $9, NULL)); }
     ;
-
-
 
 /* The main function of the program. */
 main:
@@ -134,7 +93,6 @@ main:
             pop_symbol_table();
         }
     ;
-
 
 /* Represents the list of arguments in a function or procedure definition. If there are no arguments, a 'none' argument node is created. */
 arguments:
@@ -434,83 +392,6 @@ void printTree(node *tree)
     }
 }
 
-void print_symbol_table() {
-    SymbolTableNode *node;
-    Symbol *sym;
-
-    printf("Symbol Table:\n");
-    for (node = symbol_table_stack; node != NULL; node = node->next) {
-        for (sym = node->table; sym != NULL; sym = sym->next) {
-            printf("Name: %s, Type: %s\n", sym->name, sym->type);
-        }
-        printf("----\n");
-    }
-}
-
-Symbol* put_symbol(char *name, char *type) {
-    if (symbol_table_stack == NULL) {
-        return NULL;  // or error
-    }
-
-    // Check if a symbol with the same name already exists
-    if (get_symbol(name) != NULL) {
-        error_message = malloc(strlen(name) + 50);  // size for the message and the name
-        sprintf(error_message, "Error: Duplicate declaration of function '%s'", name);
-        return NULL;
-    }
-
-    Symbol *sym = (Symbol*) malloc(sizeof(Symbol));
-    sym->name = strdup(name);
-    sym->type = strdup(type);
-    sym->next = symbol_table_stack->table;
-    symbol_table_stack->table = sym;
-    return sym;
-}
-
-
-
-Symbol* get_symbol(char *name) {
-    for(SymbolTableNode *node = symbol_table_stack; node != NULL; node = node->next)
-        for(Symbol *sym = node->table; sym != NULL; sym = sym->next)
-            if(strcmp(sym->name, name) == 0)
-                return sym;
-    return NULL;
-}
-
-
-// Push a new symbol table onto the stack.
-void push_symbol_table() {
-    SymbolTableNode *node = (SymbolTableNode*) malloc(sizeof(SymbolTableNode));
-    node->table = NULL;  // start with an empty symbol table
-    node->next = symbol_table_stack;
-    symbol_table_stack = node;
-}
-
-// Pop the top symbol table off the stack.
-void pop_symbol_table() {
-    if (symbol_table_stack == NULL) {
-        return;  // or error
-    }
-    SymbolTableNode *top = symbol_table_stack;
-    symbol_table_stack = top->next;
-
-    // Print the symbol table before freeing.
-    printf("Symbol table before freeing:\n");
-    print_symbol_table();
-
-    // Free the symbol table.
-    Symbol *sym = top->table;
-    while(sym != NULL) {
-        Symbol *next = sym->next;
-        free(sym->name);
-        free(sym->type);
-        free(sym);
-        sym = next;
-    }
-
-    free(top);
-}
-
 int yyerror(const char *e)
 {
     if(error_message) {
@@ -519,10 +400,6 @@ int yyerror(const char *e)
         error_message = NULL;
     } else {
         fprintf(stderr, "Error: Unknown error\n");
-    }
-     // clean up symbol table
-    while (symbol_table_stack != NULL) {
-        pop_symbol_table();
     }
 
     return 0;
@@ -550,9 +427,6 @@ int main(int argc, char *argv[])
     }
 
     fclose(inputFile);
-
-    // print symbol table
-    print_symbol_table();
 
     return 0;
 }
