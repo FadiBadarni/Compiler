@@ -12,14 +12,149 @@
         struct node *right;
     } node;
 
+    typedef struct symbol_table_entry
+    {
+        char *name;
+        char *type;
+        struct symbol_table_entry *next;
+    } symbol_table_entry;
+
+    typedef struct symbol_table
+    {
+        symbol_table_entry *head;
+        struct symbol_table *prev;
+    } symbol_table;
+
     node* createNode(char* token, node *left, node *right);
     void printTree (node *tree);
     void indent(int n);
     int yylex();
     int yyerror(const char *e);
-
+    symbol_table *current_table = NULL; // this points to the top of the stack
     int printlevel=0;
     node *root;
+
+    symbol_table* createSymbolTable()
+    {
+        symbol_table *table = (symbol_table*) malloc(sizeof(symbol_table));
+        if (table == NULL)
+        {
+            fprintf(stderr, "Error: Unable to allocate memory for symbol table\n");
+            return NULL;
+        }
+        table->head = NULL;
+        table->prev = NULL;
+        return table;
+    }
+
+    int getSymbolTableDepth()
+    {
+        int depth = 0;
+        symbol_table *table = current_table;
+        while (table != NULL)
+        {
+            depth++;
+            table = table->prev;
+        }
+        return depth;
+    }
+
+    void printSymbolTable(symbol_table *table)
+    {
+        printf("Symbol Table :\n");
+
+        // Print the table header
+        printf("-----------------------------------------------\n");
+        printf("| %-20s | %-20s |\n", "Name", "Type");
+        printf("-----------------------------------------------\n");
+
+        // Print each entry in the table
+        symbol_table_entry *entry = table->head;
+        while (entry != NULL)
+        {
+            printf("| %-20s | %-20s |\n", entry->name, entry->type);
+            entry = entry->next;
+        }
+
+        // Print the table footer
+        printf("-----------------------------------------------\n");
+    }
+
+    void pushSymbolTable(symbol_table *table)
+    {
+        table->prev = current_table;
+        current_table = table;
+        printf("Pushed symbol table. Current scope depth after push: %d\n", getSymbolTableDepth());
+    }
+
+
+    void popSymbolTable()
+    {
+        symbol_table *table = current_table;
+        printf("Popping symbol table. Current scope depth before pop: %d\n", getSymbolTableDepth());
+        current_table = current_table->prev;
+        free(table);
+        printf("Popped symbol table. Current scope depth after pop: %d\n", getSymbolTableDepth());
+    }
+
+
+    symbol_table_entry* lookupSymbolTableInCurrentScope(char *name)
+    {
+        if (current_table == NULL) {
+            return NULL;
+        }
+        symbol_table_entry *entry = current_table->head;
+        while (entry != NULL)
+        {
+            if (strcmp(entry->name, name) == 0)
+                return entry;
+            entry = entry->next;
+        }
+        return NULL;
+    }
+
+    symbol_table_entry* lookupSymbolTable(char *name)
+    {
+        symbol_table *table = current_table;
+        while (table != NULL)
+        {
+            symbol_table_entry *entry = table->head;
+            while (entry != NULL)
+            {
+                if (strcmp(entry->name, name) == 0)
+                    return entry;
+                entry = entry->next;
+            }
+            table = table->prev;
+        }
+        return NULL;
+    }
+
+    void addSymbolTableEntry(char *name, char *type)
+    {
+        /* Check if the name already exists in the current scope */
+        symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope(name);
+        if (existingEntry != NULL) {
+            fprintf(stderr, "Error: Name %s is already declared in the current scope\n", name);
+            return;
+        }
+
+        /* If name does not exist in current scope, add it */
+        symbol_table_entry *entry = (symbol_table_entry*) malloc(sizeof(symbol_table_entry));
+        if (entry == NULL)
+        {
+            fprintf(stderr, "Error: Unable to allocate memory for symbol table entry\n");
+            return;
+        }
+        entry->name = strdup(name);
+        entry->type = strdup(type);
+        entry->next = current_table->head;
+        current_table->head = entry;
+
+        printf("Added symbol to table. Current table:\n");
+        printSymbolTable(current_table);
+    }
+
 %}
 
 %union
@@ -74,19 +209,82 @@ subroutines:
 
 /* A subroutine can either be a function, which returns a specific type, or a procedure, which does not return anything. */
 subroutine:
-    FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE statements_list RBRACE
-        { $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $9, NULL)); }
+    FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE
+        {
+            /* Check if a function with the same name is already declared in the global scope */
+            symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
+            if (existingEntry != NULL) {
+                yyerror("Error: Function with this name is already declared in the current scope");
+                YYABORT;
+            }
+
+            /* Add the function name to the global symbol table */
+            addSymbolTableEntry($2, "function");
+
+            /* When we start a new function, we enter a new scope.
+            So we create a new symbol table and push it onto the stack. */
+            symbol_table *newTable = createSymbolTable();
+            if (newTable == NULL) {
+                yyerror("Failed to create symbol table");
+                YYABORT;
+            }
+            pushSymbolTable(newTable);
+        }
+    statements_list
+        {
+            /* When we're done with the function, we exit its scope,
+            so we pop its symbol table off the stack. */
+            popSymbolTable();
+        }
+    RBRACE
+        {
+            $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $10, NULL));
+        }
     | FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON VOID LBRACE statements_list RBRACE
         { $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $9, NULL)); }
     ;
 
 /* The main function of the program. */
 main:
-    FUNCTION MAIN LPAREN RPAREN COLON TYPE LBRACE statements_list RBRACE
-        { $$ = createNode("function", createNode("main", NULL, NULL), createNode("body", $8, NULL)); }
-    | FUNCTION MAIN LPAREN RPAREN COLON VOID LBRACE statements_list RBRACE
-        { $$ = createNode("procedure", createNode("main", NULL, NULL), createNode("body", $8, NULL)); }
+    FUNCTION MAIN LPAREN RPAREN COLON VOID LBRACE
+        {
+            /* Check if a function with the same name is already declared in the global scope */
+            symbol_table *globalTable = current_table;
+            while (globalTable->prev != NULL) {
+                globalTable = globalTable->prev;
+            }
+
+            symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
+            if (existingEntry != NULL) {
+                yyerror("Error: The program can only have one main function.");
+                YYABORT;
+            }
+
+            /* Add the main function name to the symbol table */
+            addSymbolTableEntry("main", "function");
+
+            /* When we start the main function, we enter a new scope.
+            So we create a new symbol table and push it onto the stack. */
+            symbol_table *newTable = createSymbolTable();
+            if (newTable == NULL) {
+                yyerror("Failed to create symbol table");
+                YYABORT;
+            }
+            pushSymbolTable(newTable);
+        }
+    statements_list
+        {
+            /* When we're done with the main function, we exit its scope,
+            so we pop its symbol table off the stack. */
+            popSymbolTable();
+        }
+    RBRACE
+        {
+            $$ = createNode("procedure", createNode("main", NULL, NULL), createNode("body", $9, NULL));
+        }
     ;
+
+
 
 /* Represents the list of arguments in a function or procedure definition. If there are no arguments, a 'none' argument node is created. */
 arguments:
@@ -152,7 +350,25 @@ statement:
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
     | TYPE IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
-        { $$ = createNode("declare_string", createNode($2, NULL, NULL), createNode($4, NULL, NULL)); } /* Strings declarations */
+        {
+            if (current_table == NULL) {
+                fprintf(stderr, "Error: Symbol table is not initialized\n");
+                return -1;
+            }
+            if ($1 == NULL || $2 == NULL) {
+                fprintf(stderr, "Error: Null values provided\n");
+                return -1;
+            }
+
+            symbol_table_entry* entry = lookupSymbolTableInCurrentScope($2);
+            if (entry != NULL) {
+                fprintf(stderr, "Error: Variable %s already declared\n", $2);
+                return -1;
+            }
+
+            addSymbolTableEntry($2, $1);
+            $$ = createNode("declare_string", createNode($2, NULL, NULL), createNode($4, NULL, NULL));
+        } /* Strings declarations */
     | TYPE IDENTIFIER LBRACKET INT_LITERAL RBRACKET ASSIGNMENT STRING_LITERAL SEMICOLON
         { $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL))); }
     | IDENTIFIER LBRACKET expression RBRACKET ASSIGNMENT CHAR_LITERAL SEMICOLON
@@ -405,6 +621,14 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error: Unable to open file %s\n", argv[1]);
         return -1;
     }
+
+    symbol_table *newTable = createSymbolTable();
+    if (newTable == NULL) {
+        fprintf(stderr, "Failed to create symbol table\n");
+        return -1;
+    }
+    pushSymbolTable(newTable);
+
 
     yyin = inputFile;
     if (yyparse() != 0) {
