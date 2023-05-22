@@ -82,16 +82,10 @@ subroutine:
 
 /* The main function of the program. */
 main:
-    FUNCTION MAIN LPAREN RPAREN COLON VOID LBRACE { push_symbol_table(); } statements_list RBRACE
-        {
-            Symbol* mainSymbol = put_symbol($2, $5);
-            if (mainSymbol == NULL) {
-                fprintf(stderr, "Error: main function has already been declared\n");
-                YYERROR; // Duplicate symbol, terminate parsing
-            }
-            $$ = createNode("procedure", createNode("main", NULL, NULL), createNode("main_body", $9, NULL));
-            pop_symbol_table();
-        }
+    FUNCTION MAIN LPAREN RPAREN COLON TYPE LBRACE statements_list RBRACE
+        { $$ = createNode("function", createNode("main", NULL, NULL), createNode("body", $8, NULL)); }
+    | FUNCTION MAIN LPAREN RPAREN COLON VOID LBRACE statements_list RBRACE
+        { $$ = createNode("procedure", createNode("main", NULL, NULL), createNode("body", $8, NULL)); }
     ;
 
 /* Represents the list of arguments in a function or procedure definition. If there are no arguments, a 'none' argument node is created. */
@@ -394,14 +388,7 @@ void printTree(node *tree)
 
 int yyerror(const char *e)
 {
-    if(error_message) {
-        fprintf(stderr, "%s\n", error_message);
-        free(error_message);
-        error_message = NULL;
-    } else {
-        fprintf(stderr, "Error: Unknown error\n");
-    }
-
+    fprintf(stderr, "Error: %s\n", e);
     return 0;
 }
 
