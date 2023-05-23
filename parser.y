@@ -180,11 +180,55 @@
 
         newArgument->name = strdup(argumentName);
         newArgument->type = strdup(argumentType);
-        newArgument->next = functionEntry->arguments;
+        newArgument->next = NULL;
 
         /* Prepend the new argument to the function's argument list */
-        functionEntry->arguments = newArgument;
+        if (functionEntry->arguments == NULL) {
+            functionEntry->arguments = newArgument;
+        } else {
+            argument_entry *arg = functionEntry->arguments;
+            while (arg->next != NULL) {
+                arg = arg->next;
+            }
+            arg->next = newArgument;
+        }
     }
+
+    int countArguments(symbol_table_entry *entry) {
+        int count = 0;
+        argument_entry *arg = entry->arguments;
+        while(arg != NULL) {
+            printf("Argument name: %s\n", arg->name);
+            count++;
+            arg = arg->next;
+        }
+        printf("from countArguments %d \n", count);
+        return count;
+    }
+
+    /*
+    Tree structure needs fixing for generating arguments. this function works in the
+    messed up structure, nesting is causing the problem.
+    */
+    int countNodes(node *n) {
+        int count = 0;
+        while (n != NULL) {
+            if (strcmp(n->token, "arguments") == 0) {
+                node *argNode = n->left;
+                count += countNodes(argNode);
+                if(n->right != NULL){
+                    count++;
+                }
+            }
+            n = n->right;
+        }
+        printf("from countNodes %d \n", count);
+        return count;
+    }
+
+
+
+
 
 %}
 
@@ -437,6 +481,10 @@ function_call:
                 yyerror("Error: Function not defined");
                 YYABORT;
             }
+            if (countArguments(existingEntry) != 0) {
+                yyerror("Error: Wrong number of arguments in function call");
+                YYABORT;
+            }
             $$ = createNode("call", createNode($1, NULL, NULL), NULL);
         } // handle function call without arguments
     | IDENTIFIER LPAREN function_call_arguments RPAREN
@@ -446,6 +494,11 @@ function_call:
                 yyerror("Error: Function not defined");
                 YYABORT;
             }
+            int numCallArgs = countNodes($3);
+            // if (countArguments(existingEntry) != numCallArgs) {
+            //     yyerror("Error: Wrong number of arguments in function call");
+            //     YYABORT;
+            // }
             $$ = createNode("call", createNode($1, createNode("arguments", $3, NULL), NULL), NULL);
         } // handle function call with arguments
 ;
