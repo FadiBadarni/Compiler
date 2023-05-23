@@ -8,11 +8,11 @@
 %%
 
  /*Keywords Lexemes*/
-"bool"          { yylval.string = strdup(yytext); return TYPE; }
-"char"          { yylval.string = strdup(yytext); return TYPE; }
-"int"           { yylval.string = strdup(yytext); return TYPE; }
-"real"          { yylval.string = strdup(yytext); return TYPE; }
-"string"        { yylval.string = strdup(yytext); return TYPE; }
+"bool"          { yylval.string = strdup(yytext); return BOOL; }
+"char"          { yylval.string = strdup(yytext); return CHAR; }
+"int"           { yylval.string = strdup(yytext); return INT; }
+"real"          { yylval.string = strdup(yytext); return REAL; }
+"string"        { yylval.string = strdup(yytext); return STRING; }
 "char*"         { yylval.string = strdup(yytext); return POINTER_TYPE; }
 "int*"          { yylval.string = strdup(yytext); return POINTER_TYPE; }
 "real*"         { yylval.string = strdup(yytext); return POINTER_TYPE; }

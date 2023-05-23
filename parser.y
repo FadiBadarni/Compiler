@@ -4,6 +4,7 @@
     #include <string.h>
     #include "lex.yy.c"
     #include <stdbool.h>
+    #include <stdarg.h>
 
     typedef struct node
     {
@@ -37,7 +38,7 @@
     void printTree (node *tree);
     void indent(int n);
     int yylex();
-    int yyerror(const char *e);
+    int yyerror(const char *fmt, ...);
     symbol_table *current_table = NULL; // this points to the top of the stack
     char* currentFunction = NULL;
 
@@ -101,6 +102,17 @@
         symbol_table *table = current_table;
         printf("Popping symbol table. Current scope depth before pop: %d\n", getSymbolTableDepth());
         current_table = current_table->prev;
+
+        symbol_table_entry* entry = table->head;
+        while (entry != NULL)
+        {
+            symbol_table_entry* next = entry->next;
+            free(entry->name);
+            free(entry->type);
+            free(entry);
+            entry = next;
+        }
+
         free(table);
         printf("Popped symbol table. Current scope depth after pop: %d\n", getSymbolTableDepth());
     }
@@ -202,7 +214,6 @@
             count++;
             arg = arg->next;
         }
-        printf("from countArguments %d \n", count);
         return count;
     }
 
@@ -222,7 +233,6 @@
             }
             n = n->right;
         }
-        printf("from countNodes %d \n", count);
         return count;
     }
 
@@ -242,9 +252,9 @@
 %token <string> DIVISION PLUS MINUS MULTI IDENTIFIER
 %token <string> AND OR EQUALS
 %token <string> INT_LITERAL CHAR_LITERAL STRING_LITERAL BOOL_LITERAL REAL_LITERAL
-%token <string> CHAR INT REAL STRING BOOL VOID
+%token <string> BOOL CHAR INT REAL STRING VOID
 %token <string> VAR ASSIGNMENT SEMICOLON COLON ARROW COMMA PIPE LBRACKET RBRACKET
-%token <string> TYPE FUNCTION MAIN RETURN
+%token <string> FUNCTION MAIN RETURN
 %token <string> NULL_PTR POINTER_TYPE ADDRESS
 %token <string> IF ELSE WHILE DO FOR
 %token <string> GT GTE LT LTE NOT NEQ
@@ -252,7 +262,7 @@
 %token LPAREN RPAREN LBRACE RBRACE
 
 %type <node> statement statements_list expression function_call function_call_arguments
-%type <node> subroutines subroutine main arguments arguments_list argument identifiers_list
+%type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
 %type <node> program
 %type <node> code_block if_statement while_statement do_while_statement for_statement
 
@@ -309,7 +319,7 @@ subroutine:
             pushSymbolTable(newTable);
 
         }
-    arguments RPAREN COLON TYPE
+    arguments RPAREN COLON type
         {
         }
     LBRACE statements_list
@@ -419,11 +429,11 @@ arguments_list:
 
 /* Used to parse individual arguments. */
 argument:
-    IDENTIFIER ARROW identifiers_list COLON TYPE
+    IDENTIFIER ARROW identifiers_list COLON type
         {
             /* Add argument to symbol table */
             char *argumentName = $1;
-            char *argumentType = $5;
+            struct node *argumentType = $5;
 
             // Process identifiers_list
             char* identifiers = strdup($3->token);
@@ -438,21 +448,16 @@ argument:
                 }
 
                 // add identifier to the symbol table
-                addSymbolTableEntry(identifier, argumentType);
-                addArgumentToFunction(currentFunction, identifier, argumentType);
+                addSymbolTableEntry(identifier, argumentType->token);
+                addArgumentToFunction(currentFunction, identifier, argumentType->token);
                 identifier = strtok(NULL, " "); // get the next identifier
             }
 
             free(identifiers);
 
-            $$ = createNode("argument", createNode(argumentType, NULL, NULL), $3);
+            $$ = createNode("argument", createNode(argumentType->token, NULL, NULL), $3);
         }
     ;
-
-
-
-
-
 
 /* Used to parse lists of identifiers, separated by commas. */
 identifiers_list:
@@ -472,78 +477,40 @@ statements_list:
     | statements_list statement { $$ = createNode("statements_list", $1, $2); }
     ;
 
-/* non-terminal for a function call. */
-function_call:
-    IDENTIFIER LPAREN RPAREN
-        {
-            symbol_table_entry *existingEntry = lookupSymbolTable($1);
-            if (existingEntry == NULL) {
-                yyerror("Error: Function not defined");
-                YYABORT;
-            }
-            if (countArguments(existingEntry) != 0) {
-                yyerror("Error: Wrong number of arguments in function call");
-                YYABORT;
-            }
-            $$ = createNode("call", createNode($1, NULL, NULL), NULL);
-        } // handle function call without arguments
-    | IDENTIFIER LPAREN function_call_arguments RPAREN
-        {
-            symbol_table_entry *existingEntry = lookupSymbolTable($1);
-            if (existingEntry == NULL) {
-                yyerror("Error: Function not defined");
-                YYABORT;
-            }
-            int numCallArgs = countNodes($3);
-            // if (countArguments(existingEntry) != numCallArgs) {
-            //     yyerror("Error: Wrong number of arguments in function call");
-            //     YYABORT;
-            // }
-            $$ = createNode("call", createNode($1, createNode("arguments", $3, NULL), NULL), NULL);
-        } // handle function call with arguments
-;
-
-
-
-function_call_arguments:
-    expression { $$ = createNode("argument", $1, NULL); } // single argument
-    | function_call_arguments COMMA expression { $$ = createNode("arguments", $1, createNode("argument", $3, NULL)); } // multiple arguments
-;
-
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
 statement:
     VAR identifiers_list ASSIGNMENT expression COLON POINTER_TYPE SEMICOLON
         { $$ = createNode("declare_initialize_pointer", $2, createNode("declare_initialize_data", $4, createNode($6, NULL, NULL))); } // handle pointer variable declaration with initialization
-    | VAR identifiers_list ASSIGNMENT expression COLON TYPE SEMICOLON
-        { $$ = createNode("declare_initialize", $2, createNode("declare_initialize_data", $4, createNode($6, NULL, NULL))); } // handle variable declaration with initialization
+    | VAR identifiers_list ASSIGNMENT expression COLON type SEMICOLON
+        { $$ = createNode("declare_initialize", $2, createNode("declare_initialize_data", $4, $6)); } // handle variable declaration with initialization
     | VAR identifiers_list COLON POINTER_TYPE SEMICOLON
         { $$ = createNode("declare_pointer", $2, createNode($4, NULL, NULL)); } // handle pointer variable declaration
-    | VAR identifiers_list COLON TYPE SEMICOLON
-        { $$ = createNode("declare", $2, createNode($4, NULL, NULL)); } // handle variable declaration
+    | VAR identifiers_list COLON type SEMICOLON
+        { $$ = createNode("declare", $2, $4); } // handle variable declaration
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
-    | TYPE IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
+    | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
         {
             if (current_table == NULL) {
-                fprintf(stderr, "Error: Symbol table is not initialized\n");
-                return -1;
+                yyerror("Error: Symbol table is not initialized\n");
+                YYABORT;
             }
             if ($1 == NULL || $2 == NULL) {
-                fprintf(stderr, "Error: Null values provided\n");
-                return -1;
+                yyerror("Error: Null values provided\n");
+                YYABORT;
             }
 
             symbol_table_entry* entry = lookupSymbolTableInCurrentScope($2);
             if (entry != NULL) {
-                fprintf(stderr, "Error: Variable %s already declared\n", $2);
-                return -1;
+                yyerror("Error: Variable %s already declared\n", $2);
+                YYABORT;
             }
 
-            addSymbolTableEntry($2, $1);
+            addSymbolTableEntry($2, $1->token);
             $$ = createNode("declare_string", createNode($2, NULL, NULL), createNode($4, NULL, NULL));
         } /* Strings declarations */
-    | TYPE IDENTIFIER LBRACKET INT_LITERAL RBRACKET ASSIGNMENT STRING_LITERAL SEMICOLON
+    | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET ASSIGNMENT STRING_LITERAL SEMICOLON
         { $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL))); }
     | IDENTIFIER LBRACKET expression RBRACKET ASSIGNMENT CHAR_LITERAL SEMICOLON
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
@@ -558,6 +525,43 @@ statement:
     | do_while_statement
     | for_statement
     ;
+
+
+/* non-terminal for a function call. */
+function_call:
+    IDENTIFIER LPAREN RPAREN
+        {
+            symbol_table_entry *existingEntry = lookupSymbolTable($1);
+            if (existingEntry == NULL) {
+                yyerror("Function '%s' not defined", $1);
+                YYABORT;
+            }
+            if (countArguments(existingEntry) != 0) {
+                yyerror("Error: Wrong number of arguments in function call");
+                YYABORT;
+            }
+            $$ = createNode("call", createNode($1, NULL, NULL), NULL);
+        } // handle function call without arguments
+    | IDENTIFIER LPAREN function_call_arguments RPAREN
+        {
+            symbol_table_entry *existingEntry = lookupSymbolTable($1);
+            if (existingEntry == NULL) {
+                yyerror("Function '%s' not defined", $1);
+                YYABORT;
+            }
+            int numCallArgs = countNodes($3);
+            // if (countArguments(existingEntry) != numCallArgs) {
+            //     yyerror("Error: Wrong number of arguments in function call");
+            //     YYABORT;
+            // }
+            $$ = createNode("call", createNode($1, createNode("arguments", $3, NULL), NULL), NULL);
+        } // handle function call with arguments
+;
+
+function_call_arguments:
+    expression { $$ = createNode("argument", $1, NULL); } // single argument
+    | function_call_arguments COMMA expression { $$ = createNode("arguments", $1, createNode("argument", $3, NULL)); } // multiple arguments
+;
 
 
 code_block:
@@ -674,6 +678,16 @@ expression:
         { $$ = $2; }
     ;
 
+type:
+    BOOL   { $$ = createNode($1, NULL, NULL); }
+    | CHAR { $$ = createNode($1, NULL, NULL); }
+    | INT   { $$ = createNode($1, NULL, NULL); }
+    | REAL  { $$ = createNode($1, NULL, NULL); }
+    | STRING { $$ = createNode($1, NULL, NULL); }
+    ;
+
+
+
 %%
 
 node* createNode(char* token, node *left, node *right) {
@@ -776,9 +790,16 @@ void printTree(node *tree)
     }
 }
 
-int yyerror(const char *e)
+int yyerror(const char *fmt, ...)
 {
-    fprintf(stderr, "Error: %s\n", e);
+    va_list args;
+    va_start(args, fmt);
+
+    fprintf(stderr, "Error at line %d: ", yylineno);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+
+    va_end(args);
     return 0;
 }
 
