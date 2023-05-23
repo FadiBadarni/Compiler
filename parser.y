@@ -209,16 +209,16 @@ subroutines:
 
 /* A subroutine can either be a function, which returns a specific type, or a procedure, which does not return anything. */
 subroutine:
-    FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON TYPE LBRACE
+    FUNCTION IDENTIFIER LPAREN
         {
-            /* Check if a function with the same name is already declared in the global scope */
+            /* Check if a function with the same name is already declared in the current scope */
             symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
             if (existingEntry != NULL) {
                 yyerror("Error: Function with this name is already declared in the current scope");
                 YYABORT;
             }
 
-            /* Add the function name to the global symbol table */
+            /* Add the function name to the symbol table */
             addSymbolTableEntry($2, "function");
 
             /* When we start a new function, we enter a new scope.
@@ -229,8 +229,12 @@ subroutine:
                 YYABORT;
             }
             pushSymbolTable(newTable);
+
         }
-    statements_list
+    arguments RPAREN COLON TYPE
+        {
+        }
+    LBRACE statements_list
         {
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
@@ -238,11 +242,44 @@ subroutine:
         }
     RBRACE
         {
-            $$ = createNode("function", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $10, NULL));
+            $$ = createNode("function", createNode($2, createNode("arguments", $5, NULL), NULL), createNode("body", $11, NULL));
         }
-    | FUNCTION IDENTIFIER LPAREN arguments RPAREN COLON VOID LBRACE statements_list RBRACE
-        { $$ = createNode("procedure", createNode($2, createNode("arguments", $4, NULL), NULL), createNode("body", $9, NULL)); }
+    | FUNCTION IDENTIFIER LPAREN RPAREN COLON VOID
+        {
+            /* Check if a function with the same name is already declared in the current scope */
+            symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
+            if (existingEntry != NULL) {
+                yyerror("Error: Function with this name is already declared in the current scope");
+                YYABORT;
+            }
+
+            /* Add the function name to the symbol table */
+            addSymbolTableEntry($2, "function");
+
+            /* When we start a new function, we enter a new scope.
+            So we create a new symbol table and push it onto the stack. */
+            symbol_table *newTable = createSymbolTable();
+            if (newTable == NULL) {
+                yyerror("Failed to create symbol table");
+                YYABORT;
+            }
+            pushSymbolTable(newTable);
+
+             /* Add the function name to its own symbol table (the one we just pushed) */
+            addSymbolTableEntry($2, "function");
+        }
+    LBRACE statements_list
+        {
+            /* When we're done with the function, we exit its scope,
+            so we pop its symbol table off the stack. */
+            popSymbolTable();
+        }
+    RBRACE
+        {
+            $$ = createNode("procedure", createNode($2, NULL, NULL), createNode("body", $9, NULL));
+        }
     ;
+
 
 /* The main function of the program. */
 main:
@@ -288,9 +325,7 @@ main:
 
 /* Represents the list of arguments in a function or procedure definition. If there are no arguments, a 'none' argument node is created. */
 arguments:
-    /* No arguments. */
-    { $$ = createNode("arguments_none", NULL, NULL); }
-    | arguments_list { $$ = $1; }  /* One or more arguments. */
+    arguments_list { $$ = $1; }  /* One or more arguments. */
     ;
 
 /* Used to parse the list of arguments. */
@@ -302,8 +337,38 @@ arguments_list:
 /* Used to parse individual arguments. */
 argument:
     IDENTIFIER ARROW identifiers_list COLON TYPE
-        { $$ = createNode("argument", createNode($5, NULL, NULL), $3); }
+        {
+            /* Add argument to symbol table */
+            char *argumentName = $1;
+            char *argumentType = $5;
+
+            // Process identifiers_list
+            char* identifiers = strdup($3->token);
+            char* identifier = strtok(identifiers, " ");
+
+            while (identifier != NULL) {
+                // check if identifier is already in the symbol table
+                symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope(identifier);
+                if (existingEntry != NULL) {
+                    yyerror("Error: Identifier with this name is already declared in the current scope");
+                    YYABORT;
+                }
+
+                // add identifier to the symbol table
+                addSymbolTableEntry(identifier, argumentType);
+
+                identifier = strtok(NULL, " "); // get the next identifier
+            }
+
+            free(identifiers);
+
+            $$ = createNode("argument", createNode(argumentType, NULL, NULL), $3);
+        }
     ;
+
+
+
+
 
 
 /* Used to parse lists of identifiers, separated by commas. */
