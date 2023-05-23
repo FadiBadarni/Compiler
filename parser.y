@@ -12,10 +12,18 @@
         struct node *right;
     } node;
 
+    typedef struct argument_entry
+    {
+        char *name;
+        char *type;
+        struct argument_entry *next;
+    } argument_entry;
+
     typedef struct symbol_table_entry
     {
         char *name;
         char *type;
+        argument_entry *arguments;
         struct symbol_table_entry *next;
     } symbol_table_entry;
 
@@ -31,6 +39,8 @@
     int yylex();
     int yyerror(const char *e);
     symbol_table *current_table = NULL; // this points to the top of the stack
+    char* currentFunction = NULL;
+
     int printlevel=0;
     node *root;
 
@@ -59,26 +69,24 @@
         return depth;
     }
 
-    void printSymbolTable(symbol_table *table)
+    void printSymbolTable(symbol_table* table)
     {
-        printf("Symbol Table :\n");
+        printf("Symbol Table:\n");
+        printf("+----------------------+----------------------+\n");
+        printf("|        Name          |        Type          |\n");
+        printf("+----------------------+----------------------+\n");
 
-        // Print the table header
-        printf("-----------------------------------------------\n");
-        printf("| %-20s | %-20s |\n", "Name", "Type");
-        printf("-----------------------------------------------\n");
-
-        // Print each entry in the table
-        symbol_table_entry *entry = table->head;
+        symbol_table_entry* entry = table->head;
         while (entry != NULL)
         {
             printf("| %-20s | %-20s |\n", entry->name, entry->type);
+            // Print a separator between entries
+            printf("+----------------------+----------------------+\n");
+
             entry = entry->next;
         }
-
-        // Print the table footer
-        printf("-----------------------------------------------\n");
     }
+
 
     void pushSymbolTable(symbol_table *table)
     {
@@ -155,6 +163,29 @@
         printSymbolTable(current_table);
     }
 
+    void addArgumentToFunction(char *functionName, char *argumentName, char *argumentType) {
+        /* Retrieve the function's entry from the symbol table */
+        symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
+        if (functionEntry == NULL) {
+            fprintf(stderr, "Error: Function not found in the symbol table\n");
+            return;
+        }
+
+        /* Create a new argument entry */
+        argument_entry *newArgument = (argument_entry*) malloc(sizeof(argument_entry));
+        if (newArgument == NULL) {
+            fprintf(stderr ,"Error: Unable to allocate memory for argument entry");
+            return;
+        }
+
+        newArgument->name = strdup(argumentName);
+        newArgument->type = strdup(argumentType);
+        newArgument->next = functionEntry->arguments;
+
+        /* Prepend the new argument to the function's argument list */
+        functionEntry->arguments = newArgument;
+    }
+
 %}
 
 %union
@@ -221,6 +252,9 @@ subroutine:
             /* Add the function name to the symbol table */
             addSymbolTableEntry($2, "function");
 
+            /* Set currentFunction to the name of the function being parsed */
+            currentFunction = strdup($2);
+
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
             symbol_table *newTable = createSymbolTable();
@@ -239,6 +273,10 @@ subroutine:
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
             popSymbolTable();
+
+            /* Clear currentFunction since we're done parsing the function */
+            free(currentFunction);
+            currentFunction = NULL;
         }
     RBRACE
         {
@@ -291,7 +329,8 @@ main:
                 globalTable = globalTable->prev;
             }
 
-            symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
+            symbol_table_entry *existingEntry = lookupSymbolTable("main");
+
             if (existingEntry != NULL) {
                 yyerror("Error: The program can only have one main function.");
                 YYABORT;
@@ -356,7 +395,7 @@ argument:
 
                 // add identifier to the symbol table
                 addSymbolTableEntry(identifier, argumentType);
-
+                addArgumentToFunction(currentFunction, identifier, argumentType);
                 identifier = strtok(NULL, " "); // get the next identifier
             }
 
@@ -391,9 +430,26 @@ statements_list:
 
 /* non-terminal for a function call. */
 function_call:
-    IDENTIFIER LPAREN RPAREN { $$ = createNode("call", createNode($1, NULL, NULL), NULL); } // handle function call without arguments
-    | IDENTIFIER LPAREN function_call_arguments RPAREN { $$ = createNode("call", createNode($1, createNode("arguments", $3, NULL), NULL), NULL); } // handle function call with arguments
+    IDENTIFIER LPAREN RPAREN
+        {
+            symbol_table_entry *existingEntry = lookupSymbolTable($1);
+            if (existingEntry == NULL) {
+                yyerror("Error: Function not defined");
+                YYABORT;
+            }
+            $$ = createNode("call", createNode($1, NULL, NULL), NULL);
+        } // handle function call without arguments
+    | IDENTIFIER LPAREN function_call_arguments RPAREN
+        {
+            symbol_table_entry *existingEntry = lookupSymbolTable($1);
+            if (existingEntry == NULL) {
+                yyerror("Error: Function not defined");
+                YYABORT;
+            }
+            $$ = createNode("call", createNode($1, createNode("arguments", $3, NULL), NULL), NULL);
+        } // handle function call with arguments
 ;
+
 
 
 function_call_arguments:
