@@ -334,7 +334,7 @@ subroutine:
         }
     RBRACE
         {
-            $$ = createNode("function", createNode($2, createNode("arguments", $5, NULL), NULL), createNode("body", $11, NULL));
+            $$ = createNode("function", createNode($2, createNode("arguments", $5, NULL), createNode("return_type", $8, NULL)), createNode("body", $11, NULL));
         }
     | FUNCTION IDENTIFIER LPAREN RPAREN COLON VOID
         {
@@ -423,9 +423,10 @@ arguments:
 
 /* Used to parse the list of arguments. */
 arguments_list:
-    argument { $$ = createNode("arguments_list", $1, NULL); } /* Single argument */
-    | arguments_list SEMICOLON argument { $$ = createNode("arguments_list", $1, $3); } /* Multiple arguments */
+    argument { $$ = createNode("argument", $1, NULL); }  /* Single argument */
+    | arguments_list SEMICOLON argument { $$ = createNode("argument", $1, $3); } /* Multiple arguments */
     ;
+
 
 /* Used to parse individual arguments. */
 argument:
@@ -560,7 +561,7 @@ function_call:
 
 function_call_arguments:
     expression { $$ = createNode("argument", $1, NULL); } // single argument
-    | function_call_arguments COMMA expression { $$ = createNode("arguments", $1, createNode("argument", $3, NULL)); } // multiple arguments
+    | function_call_arguments COMMA expression { $$ = createNode("argument", $1, $3); } // multiple arguments
 ;
 
 
@@ -724,39 +725,39 @@ void printTree(node *tree)
     int isOperator = (tree->left != NULL || tree->right != NULL);
 
     // If this is the "subroutines" node, don't print it and just continue with the children
-    if (strcmp(tree->token, "subroutines") == 0) {
+    /* if (strcmp(tree->token, "subroutines") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    }
+    } */
 
     // If this is the "arguments" node, don't print it and just continue with the children
-    if (strcmp(tree->token, "arguments") == 0) {
+    /* if (strcmp(tree->token, "arguments") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    }
+    } */
 
     // If this is the "arguments_list" node, don't print it and just continue with the children
-    if (strcmp(tree->token, "arguments_list") == 0) {
+    /* if (strcmp(tree->token, "arguments_list") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    }
+    } */
 
     // If this is the "if_else_wrapper" node, don't print it and just continue with the children
-    if (strcmp(tree->token, "if_else_wrapper") == 0) {
+    /* if (strcmp(tree->token, "if_else_wrapper") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    }
+    } */
 
     // If this is the "statements_list" node, don't print it and just continue with the children
-    if (strcmp(tree->token, "statements_list") == 0) {
+    /* if (strcmp(tree->token, "statements_list") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    }
+    } */
 
 
     // If this is an operator, print it before the children
