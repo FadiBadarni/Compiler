@@ -3,9 +3,20 @@
 #include "y.tab.h"
 %}
 
-%x COMMENT
+%x COMMENT LINE_COMMENT
 
 %%
+
+ /*Comments */
+"/*"      BEGIN(COMMENT);
+"//"      BEGIN(LINE_COMMENT);
+
+<COMMENT>"*/"     BEGIN(INITIAL);
+<COMMENT>.|\n     ; /* eat up anything (including newlines) within the comments */
+
+<LINE_COMMENT>\n  BEGIN(INITIAL);
+<LINE_COMMENT>.    ; /* eat up anything within the line comments until newline */
+
 
  /*Keywords Lexemes*/
 "bool"          { yylval.string = strdup(yytext); return BOOL; }
@@ -87,11 +98,6 @@
 "|"         { return PIPE;}
 "["         { return LBRACKET;}
 "]"         { return RBRACKET;}
-
- /*Comments */
-"/*"      BEGIN(COMMENT);
-<COMMENT>"*/"     BEGIN(INITIAL);
-<COMMENT>.|\n     ; /* eat up anything (including newlines) within the comments */
 
  /*Skip Whitespace, Enter, Tab*/
 [\n]                    {yylineno++;}
