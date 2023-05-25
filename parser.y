@@ -254,68 +254,62 @@
         return count;
     }
 
-
-    char* getTypeOfExpression(node* expr) {
-        if (expr == NULL) {
-            return NULL;
-        }
-
-        /* If it's a binary operation, check the types of both operands */
-        if (expr->left && expr->right) {
-            symbol_table_entry* leftEntry = lookupSymbolTable(expr->left->token);
-            symbol_table_entry* rightEntry = lookupSymbolTable(expr->right->token);
-
-            /* If either of the entries does not exist in the symbol table, or they are of different types, return NULL */
-            if (leftEntry == NULL || rightEntry == NULL || strcmp(leftEntry->type, rightEntry->type) != 0) {
-                return NULL;
-            }
-
-            /* Otherwise, return the type of one of them */
-            return leftEntry->type;
-        }
-        /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
-        else {
-            symbol_table_entry* entry = lookupSymbolTable(expr->token);
-            if (entry != NULL) {
-                return entry->type;
-            }
-        }
-        return NULL;
-    }
-
-
-    int checkBinaryOperationType(node *left, node *right, char *operation) {
+    char* checkBinaryOperationType(node *left, node *right, char *operation) {
         symbol_table_entry *leftEntry = lookupSymbolTable(left->token);
         symbol_table_entry *rightEntry = lookupSymbolTable(right->token);
         if (leftEntry == NULL || rightEntry == NULL) {
             yyerror("Error: Undefined variable\n");
-            return -1;
+            return NULL;
         }
 
-         /* Handle arithmetic operations */
-        if ((strcmp(operation, "+") == 0 || strcmp(operation, "-") == 0 ||
-            strcmp(operation, "*") == 0 || strcmp(operation, "/") == 0) &&
-            (strcmp(leftEntry->type, "int") != 0 || strcmp(rightEntry->type, "int") != 0)) {
-            yyerror("Error: Invalid types for operation. Operands must be of the same type");
-            return -1;
+        /* Handle arithmetic operations */
+        if (strcmp(operation, "+") == 0 || strcmp(operation, "-") == 0 ||
+            strcmp(operation, "*") == 0 || strcmp(operation, "/") == 0) {
+            if((strcmp(leftEntry->type, "int") == 0 || strcmp(leftEntry->type, "real") == 0) &&
+            (strcmp(rightEntry->type, "int") == 0 || strcmp(rightEntry->type, "real") == 0)) {
+                if (strcmp(leftEntry->type, "int") == 0 && strcmp(rightEntry->type, "int") == 0) {
+                    return "int";
+                } else {
+                    return "real";
+                }
+            } else {
+                yyerror("Error: Invalid types for operation. Operands must be int or real");
+                return NULL;
+            }
         }
 
         /* Handle logical operations */
-        else if ((strcmp(operation, "&&") == 0 || strcmp(operation, "||") == 0) &&
-                (strcmp(leftEntry->type, "bool") != 0 || strcmp(rightEntry->type, "bool") != 0)) {
-            yyerror("Error: Invalid types for operation. Expected bool & bool\n");
-            return -1;
+        if (strcmp(operation, "&&") == 0 || strcmp(operation, "||") == 0) {
+            if (strcmp(leftEntry->type, "bool") == 0 && strcmp(rightEntry->type, "bool") == 0) {
+                return "bool";
+            } else {
+                yyerror("Error: Invalid types for operation. Operands must be of type bool\n");
+                return NULL;
+            }
         }
 
         /* Handle comparison operations */
-        else if ((strcmp(operation, "==") == 0 || strcmp(operation, "!=") == 0 ||
-                strcmp(operation, "<") == 0 || strcmp(operation, ">") == 0 ||
-                strcmp(operation, "<=") == 0 || strcmp(operation, ">=") == 0) &&
-                (strcmp(leftEntry->type, rightEntry->type) != 0)) {
-            yyerror("Error: Invalid types for operation. Operands must be of the same type\n");
-            return -1;
+        if (strcmp(operation, ">") == 0 || strcmp(operation, "<") == 0 ||
+            strcmp(operation, "<=") == 0 || strcmp(operation, ">=") == 0) {
+            if ((strcmp(leftEntry->type, "int") == 0 || strcmp(leftEntry->type, "real") == 0) &&
+                (strcmp(rightEntry->type, "int") == 0 || strcmp(rightEntry->type, "real") == 0)) {
+                return "bool";
+            } else {
+                yyerror("Error: Invalid types for operation. Operands must be of type int or real\n");
+                return NULL;
+            }
         }
-        return 0;
+        /* For the operators (==,!=) the two operands can be two int, two bool, two real, two char, or two pointers to the same type. The result is bool. */
+        if (strcmp(operation, "==") == 0 || strcmp(operation, "!=") == 0) {
+            if (strcmp(leftEntry->type, rightEntry->type) == 0) {
+                return "bool";
+            } else {
+                yyerror("Error: Invalid types for operation. Operands must be of the same type\n");
+                return NULL;
+            }
+        }
+
+        return NULL;
     }
 
     int checkUnaryOperationType(node *operand, char *operation) {
@@ -331,6 +325,52 @@
         // Add more checks here to support more unary operations
         return 0;
     }
+
+    char* checkExpressionType(node* expression) {
+        if (strcmp(expression->token, "+") == 0 ||
+            strcmp(expression->token, "-") == 0 ||
+            strcmp(expression->token, "*") == 0 ||
+            strcmp(expression->token, "/") == 0) {
+            return checkBinaryOperationType(expression->left, expression->right, expression->token);
+        }
+        else {
+            // Handle other cases (like identifiers, literals, etc.)
+            // This is just a basic structure, will need to extend this to handle all cases in grammar
+            symbol_table_entry* entry = lookupSymbolTable(expression->token);
+            if (entry == NULL) {
+                yyerror("Undeclared identifier: %s", expression->token);
+                return NULL;
+            }
+            return entry->type;
+        }
+    }
+
+    char* getTypeOfExpression(node* expr) {
+        if (expr == NULL) {
+            return NULL;
+        }
+
+        /* If it's a binary operation, check the types of both operands */
+        if (expr->left && expr->right) {
+            /* For binary operations, we should return the type of the result, not the type of the operands */
+            char* operationType = checkBinaryOperationType(expr->left, expr->right, expr->token);
+            if (operationType == NULL) {
+                yyerror("Error: Invalid type for operation: %s\n", expr->token);
+                return NULL;
+            }
+            return operationType;
+        }
+        /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
+        else {
+            symbol_table_entry* entry = lookupSymbolTable(expr->token);
+            if (entry != NULL) {
+                return entry->type;
+            }
+        }
+        return NULL;
+    }
+
+
 
 %}
 
@@ -626,6 +666,13 @@ statement:
                 yyerror("Variable not defined");
                 YYABORT;
             }
+
+            // Check if the type of the expression matches the type of the variable
+            char* expression_type = checkExpressionType($3);
+            if (strcmp(entry->type, expression_type) != 0) {
+                yyerror("Type mismatch in assignment");
+                YYABORT;
+            }
         }
     //TODO: MIGHT NEED CHANGING IN SYNTAX
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
@@ -757,7 +804,6 @@ if_statement:
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
-
             if (strcmp(expressionType, "bool") != 0) {
                 yyerror("Error: Condition of an if statement must be of type bool");
                 YYABORT;
@@ -781,6 +827,14 @@ if_statement:
         }
     | IF LPAREN expression RPAREN LBRACE statements_list RBRACE
         {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            printf("\n REACHED %s \n", expressionType);
+            if (strcmp(expressionType, "bool") != 0) {
+                yyerror("Error: Condition of an if statement must be of type bool");
+                YYABORT;
+            }
+
             /* Push a new symbol table for if statement scope */
             symbol_table *ifTable = createSymbolTable();
             pushSymbolTable(ifTable);
@@ -796,6 +850,14 @@ if_statement:
 while_statement:
     WHILE LPAREN expression RPAREN LBRACE statements_list RBRACE
         {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                yyerror("Error: Condition of a while statement must be of type bool");
+                YYABORT;
+            }
+
             /* Push a new symbol table for while loop scope */
             symbol_table *whileTable = createSymbolTable();
             pushSymbolTable(whileTable);
@@ -811,6 +873,14 @@ while_statement:
 do_while_statement:
     DO LBRACE statements_list RBRACE WHILE LPAREN expression RPAREN SEMICOLON
         {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($7);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                yyerror("Error: Condition of a do-while statement must be of type bool");
+                YYABORT;
+            }
+
             /* Push a new symbol table for do-while loop scope */
             symbol_table *doWhileTable = createSymbolTable();
             pushSymbolTable(doWhileTable);
@@ -825,6 +895,14 @@ do_while_statement:
 for_statement:
     FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN LBRACE statements_list RBRACE
         {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($5);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                yyerror("Error: Condition of a for statement must be of type bool");
+                YYABORT;
+            }
+
             /* Push a new symbol table for for loop scope */
             symbol_table *forTable = createSymbolTable();
             pushSymbolTable(forTable);
@@ -871,62 +949,62 @@ expression:
     | IDENTIFIER LBRACKET expression RBRACKET { $$ = createNode("array_index", createNode($1, NULL, NULL), $3); }
     /* Binary Operations */
     | expression PLUS expression {
-        if(checkBinaryOperationType($1, $3, "+") == -1)
+        if(checkBinaryOperationType($1, $3, "+") == NULL)
             YYABORT;
         $$ = createNode("+", $1, $3);
     }
     | expression MINUS expression {
-        if(checkBinaryOperationType($1, $3, "-") == -1)
+        if(checkBinaryOperationType($1, $3, "-") == NULL)
             YYABORT;
         $$ = createNode("-", $1, $3);
     }
     | expression MULTI expression {
-        if(checkBinaryOperationType($1, $3, "*") == -1)
+        if(checkBinaryOperationType($1, $3, "*") == NULL)
             YYABORT;
         $$ = createNode("*", $1, $3);
     }
     | expression DIVISION expression {
-        if(checkBinaryOperationType($1, $3, "/") == -1)
+        if(checkBinaryOperationType($1, $3, "/") == NULL)
             YYABORT;
         $$ = createNode("/", $1, $3);
     }
     | expression AND expression {
-        if(checkBinaryOperationType($1, $3, "&&") == -1)
+        if(checkBinaryOperationType($1, $3, "&&") == NULL)
             YYABORT;
         $$ = createNode("&&", $1, $3);
     }
     | expression OR expression {
-        if(checkBinaryOperationType($1, $3, "||") == -1)
+        if(checkBinaryOperationType($1, $3, "||") == NULL)
             YYABORT;
         $$ = createNode("||", $1, $3);
     }
     | expression EQUALS expression {
-        if(checkBinaryOperationType($1, $3, "==") == -1)
+        if(checkBinaryOperationType($1, $3, "==") == NULL)
             YYABORT;
         $$ = createNode("==", $1, $3);
     }
     | expression NEQ expression {
-        if(checkBinaryOperationType($1, $3, "!=") == -1)
+        if(checkBinaryOperationType($1, $3, "!=") == NULL)
             YYABORT;
         $$ = createNode("!=", $1, $3);
     }
     | expression LT expression {
-        if(checkBinaryOperationType($1, $3, "<") == -1)
+        if(checkBinaryOperationType($1, $3, "<") == NULL)
             YYABORT;
         $$ = createNode("<", $1, $3);
     }
     | expression GT expression {
-        if(checkBinaryOperationType($1, $3, ">") == -1)
+        if(checkBinaryOperationType($1, $3, ">") == NULL)
             YYABORT;
         $$ = createNode(">", $1, $3);
     }
     | expression LTE expression {
-        if(checkBinaryOperationType($1, $3, "<=") == -1)
+        if(checkBinaryOperationType($1, $3, "<=") == NULL)
             YYABORT;
         $$ = createNode("<=", $1, $3);
     }
     | expression GTE expression {
-        if(checkBinaryOperationType($1, $3, ">=") == -1)
+        if(checkBinaryOperationType($1, $3, ">=") == NULL)
             YYABORT;
         $$ = createNode(">=", $1, $3);
     }
