@@ -413,6 +413,21 @@
             }
             return entry->type;
         }
+        else { // Non-leaf node, represents an operation
+            if (n->left == NULL || n->right == NULL) {
+                yyerror("Missing operand in binary operation");
+                return NULL;
+            }
+            char* leftType = getNodeType(n->left);
+            char* rightType = getNodeType(n->right);
+
+            if (leftType == NULL || rightType == NULL) {
+                return NULL; // Error would have been printed already
+            }
+
+            // Check the type compatibility of operands with the operation
+            return checkBinaryOperationType(n->left, n->right, n->token);
+        }
 
         return NULL; // For nodes representing operations, there is no type at this level.
     }
@@ -663,35 +678,7 @@ statements_list:
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
 statement:
-    // ! NOT WANTED
-    VAR identifiers_list ASSIGNMENT expression COLON POINTER_TYPE SEMICOLON
-    {
-        $$ = createNode("declare_initialize_pointer", $2, createNode("declare_initialize_data", $4, createNode("pointer", NULL, NULL)));
-
-        node* id_node = $2;
-        while(id_node != NULL) {
-            if (addSymbolTableEntry(id_node->token, "pointer") == -1) {
-                yyerror("Variable redeclaration or memory allocation error");
-                YYABORT;
-            }
-            id_node = id_node->left;
-        }
-    }
-    // ! NOT WANTED
-    | VAR identifiers_list ASSIGNMENT expression COLON type SEMICOLON
-        {
-            $$ = createNode("declare_initialize", $2, createNode("declare_initialize_data", $4, $6));
-
-            node* id_node = $2;
-            while(id_node != NULL) {
-                if (addSymbolTableEntry(id_node->token, $6->token) == -1) {
-                    yyerror("Variable redeclaration or memory allocation error");
-                    YYABORT;
-                }
-                id_node = id_node->left;
-            }
-        }
-    | VAR identifiers_list COLON POINTER_TYPE SEMICOLON
+     VAR identifiers_list COLON POINTER_TYPE SEMICOLON
         {
             $$ = createNode("declare_pointer", $2, createNode("pointer", NULL, NULL));
 
@@ -740,6 +727,7 @@ statement:
                 YYABORT;
             }
         }
+
     //TODO: MIGHT NEED CHANGING IN SYNTAX
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
         {
@@ -1039,7 +1027,6 @@ expression:
         $$ = createNode(">=", $1, $3);
     }
     | term
-    | function_call
     ;
 
 term:
