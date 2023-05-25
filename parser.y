@@ -297,6 +297,20 @@
         return 0;
     }
 
+    int isStringLiteral(const char* str) {
+        // A string literal is usually enclosed in double quotes (like "foo")
+        // so we expect the string to be at least 2 characters long.
+        // str[0] should be a double quote and str[strlen(str) - 1] should be a double quote again
+        int len = strlen(str);
+        if (len >= 2 && str[0] == '\"' && str[len - 1] == '\"') {
+            return 1;
+        }
+
+        // If the string does not match this pattern, it is not a string literal
+        return 0;
+    }
+
+
     char* getNodeType(node *n);
 
     char* checkBinaryOperationType(node *left, node *right, char *operation) {
@@ -368,13 +382,17 @@
             yyerror("Error: Invalid type for operation '!'. Operand must be of type bool\n");
             return -1;
         }
+        if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "int") == 0 || strcmp(entry->type, "real") == 0)) {
+            yyerror("Error: Invalid type for operation 'abs'. Operand must be of type int or real\n");
+            return -1;
+        }
         // Add more checks here to support more unary operations
         return 0;
     }
 
     /* A helper function to check whether a token is an operator */
     bool isOperator(char* token) {
-        char* operators[] = {"&&", "||", "==", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "!"};
+        char* operators[] = {"&&", "||", "==", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "!", "abs"};
         int num_operators = sizeof(operators) / sizeof(operators[0]);
 
         for (int i = 0; i < num_operators; i++) {
@@ -385,6 +403,7 @@
 
         return false;
     }
+
 
     /* getNodeType function, updated to use isOperator */
     char* getNodeType(node *n) {
@@ -405,6 +424,9 @@
             }
             if (strcmp(n->token, "true") == 0 || strcmp(n->token, "false") == 0) {
                 return "bool";
+            }
+            if (isStringLiteral(n->token)) {
+                return "string";
             }
             symbol_table_entry* entry = lookupSymbolTable(n->token);
             if (entry == NULL) {
@@ -520,7 +542,41 @@ subroutines:
 
 /* A subroutine can either be a function, which returns a specific type, or a procedure, which does not return anything. */
 subroutine:
-    FUNCTION IDENTIFIER LPAREN
+    FUNCTION IDENTIFIER LPAREN RPAREN COLON type
+        {
+            /* Check if a function with the same name is already declared in the current scope */
+            symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
+            if (existingEntry != NULL) {
+                yyerror("Error: Function with this name is already declared in the current scope");
+                YYABORT;
+            }
+
+            /* Add the function name to the symbol table */
+            addSymbolTableEntry($2, "function");
+
+            /* When we start a new function, we enter a new scope.
+            So we create a new symbol table and push it onto the stack. */
+            symbol_table *newTable = createSymbolTable();
+            if (newTable == NULL) {
+                yyerror("Failed to create symbol table");
+                YYABORT;
+            }
+            pushSymbolTable(newTable);
+
+             /* Add the function name to its own symbol table (the one we just pushed) */
+            addSymbolTableEntry($2, "function");
+        }
+    LBRACE statements_list
+        {
+            /* When we're done with the function, we exit its scope,
+            so we pop its symbol table off the stack. */
+            popSymbolTable();
+        }
+    RBRACE
+        {
+            $$ = createNode("procedure", createNode($2, NULL, NULL), createNode("body", $9, NULL));
+        }
+    | FUNCTION IDENTIFIER LPAREN
         {
             /* Check if a function with the same name is already declared in the current scope */
             symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
@@ -561,40 +617,6 @@ subroutine:
             currentFunction = NULL;
 
             $$ = createNode("function", createNode($2, createNode("arguments", $5, NULL), createNode("return_type", $8, NULL)), createNode("body", $11, NULL));
-        }
-    | FUNCTION IDENTIFIER LPAREN RPAREN COLON VOID
-        {
-            /* Check if a function with the same name is already declared in the current scope */
-            symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
-            if (existingEntry != NULL) {
-                yyerror("Error: Function with this name is already declared in the current scope");
-                YYABORT;
-            }
-
-            /* Add the function name to the symbol table */
-            addSymbolTableEntry($2, "function");
-
-            /* When we start a new function, we enter a new scope.
-            So we create a new symbol table and push it onto the stack. */
-            symbol_table *newTable = createSymbolTable();
-            if (newTable == NULL) {
-                yyerror("Failed to create symbol table");
-                YYABORT;
-            }
-            pushSymbolTable(newTable);
-
-             /* Add the function name to its own symbol table (the one we just pushed) */
-            addSymbolTableEntry($2, "function");
-        }
-    LBRACE statements_list
-        {
-            /* When we're done with the function, we exit its scope,
-            so we pop its symbol table off the stack. */
-            popSymbolTable();
-        }
-    RBRACE
-        {
-            $$ = createNode("procedure", createNode($2, NULL, NULL), createNode("body", $9, NULL));
         }
     ;
 
@@ -1066,6 +1088,18 @@ unary:
             YYABORT;
         $$ = createNode("!", $2, NULL);
     }
+    | PIPE expression PIPE {
+        char* exprType = getTypeOfExpression($2);
+        if (exprType == NULL) {
+            yyerror("Expression type error for 'abs' operation");
+            YYABORT;
+        }
+        if(strcmp(exprType, "int") != 0 && strcmp(exprType, "real") != 0) {
+            yyerror("Invalid type for 'abs' operation. Operand must be of type int or real");
+            YYABORT;
+        }
+        $$ = createNode("abs", $2, NULL);
+    }
     | atom
     ;
 
@@ -1096,7 +1130,6 @@ atom:
     | NULL_PTR { $$ = createNode("null", NULL, NULL); }
     | POINTER_TYPE { $$ = createNode($1, NULL, NULL); }
     | ADDRESS IDENTIFIER { $$ = createNode("&", createNode($2, NULL, NULL), NULL); }
-    | PIPE IDENTIFIER PIPE { $$ = createNode("length_of", createNode($2, NULL, NULL), NULL); }
     | IDENTIFIER LBRACKET expression RBRACKET { $$ = createNode("array_index", createNode($1, NULL, NULL), $3); }
     /* Parenthesized Expression */
     | LPAREN expression RPAREN { $$ = $2; }
