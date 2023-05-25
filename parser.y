@@ -286,7 +286,6 @@
         return 0;
     }
 
-
 %}
 
 %union
@@ -528,12 +527,47 @@ statements_list:
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
 statement:
+    // ! NOT WANTED
     VAR identifiers_list ASSIGNMENT expression COLON POINTER_TYPE SEMICOLON
-        { $$ = createNode("declare_initialize_pointer", $2, createNode("declare_initialize_data", $4, createNode($6, NULL, NULL))); } // handle pointer variable declaration with initialization
+    {
+        $$ = createNode("declare_initialize_pointer", $2, createNode("declare_initialize_data", $4, createNode("pointer", NULL, NULL)));
+
+        node* id_node = $2;
+        while(id_node != NULL) {
+            if (addSymbolTableEntry(id_node->token, "pointer") == -1) {
+                yyerror("Variable redeclaration or memory allocation error");
+                YYABORT;
+            }
+            id_node = id_node->left;
+        }
+    }
+    // ! NOT WANTED
     | VAR identifiers_list ASSIGNMENT expression COLON type SEMICOLON
-        { $$ = createNode("declare_initialize", $2, createNode("declare_initialize_data", $4, $6)); } // handle variable declaration with initialization
+        {
+            $$ = createNode("declare_initialize", $2, createNode("declare_initialize_data", $4, $6));
+
+            node* id_node = $2;
+            while(id_node != NULL) {
+                if (addSymbolTableEntry(id_node->token, $6->token) == -1) {
+                    yyerror("Variable redeclaration or memory allocation error");
+                    YYABORT;
+                }
+                id_node = id_node->left;
+            }
+        }
     | VAR identifiers_list COLON POINTER_TYPE SEMICOLON
-        { $$ = createNode("declare_pointer", $2, createNode($4, NULL, NULL)); } // handle pointer variable declaration
+        {
+            $$ = createNode("declare_pointer", $2, createNode("pointer", NULL, NULL));
+
+            node* id_node = $2;
+            while(id_node != NULL) {
+                if (addSymbolTableEntry(id_node->token, "pointer") == -1) {
+                    yyerror("Variable redeclaration or memory allocation error");
+                    YYABORT;
+                }
+                id_node = id_node->left;
+            }
+        }
     | VAR identifiers_list COLON type SEMICOLON
         {
             $$ = createNode("declare", $2, $4);
@@ -549,7 +583,17 @@ statement:
             }
         }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
-        { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
+        {
+            $$ = createNode("=", createNode($1, NULL, NULL), $3);
+
+            // Check if variable has been declared
+            symbol_table_entry* entry = lookupSymbolTable($1);
+            if (entry == NULL) {
+                yyerror("Variable not defined");
+                YYABORT;
+            }
+        }
+    //TODO: MIGHT NEED CHANGING IN SYNTAX
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
         {
             if (current_table == NULL) {
@@ -575,9 +619,15 @@ statement:
     | IDENTIFIER LBRACKET expression RBRACKET ASSIGNMENT CHAR_LITERAL SEMICOLON
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
-        { $$ = createNode("return", $2, NULL); } // handle return statement
+        {
+            $$ = createNode("return", $2, NULL); // handle return statement
+        }
     | subroutine
-        { $$ = createNode("nested_function", $1, NULL); } // handle nested function
+        {
+            pushSymbolTable(createSymbolTable()); // create new scope for the subroutine
+            $$ = createNode("nested_function", $1, NULL); // handle nested function
+            popSymbolTable(); // end the scope for the subroutine
+        }
     | function_call SEMICOLON
     | code_block
     | if_statement
@@ -625,55 +675,107 @@ function_call_arguments:
 
 
 code_block:
-    LBRACE statements_list RBRACE { $$ = createNode("block", $2, NULL); }
+    LBRACE { pushSymbolTable(createSymbolTable()); } statements_list RBRACE
+    {
+        $$ = createNode("block", $3, NULL);
+        popSymbolTable();
+    }
     | LBRACE RBRACE { $$ = createNode("block_empty", NULL, NULL); }
     ;
+
 
 /* Used to parse if-else statements as well as standalone if statements. */
 if_statement:
     IF LPAREN expression RPAREN LBRACE statements_list RBRACE ELSE LBRACE statements_list RBRACE
-    {
-        node* if_body_node = createNode("if_body", $6, NULL);
-        node* else_body_node = createNode("else_body", $10, NULL);
-        $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
-    }
+        {
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            node* if_body_node = createNode("if_body", $6, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+
+            /* Push a new symbol table for else statement scope */
+            symbol_table *elseTable = createSymbolTable();
+            pushSymbolTable(elseTable);
+
+            node* else_body_node = createNode("else_body", $10, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting else block scope */
+
+            $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
+        }
     | IF LPAREN expression RPAREN LBRACE statements_list RBRACE
-    {
-        $$ = createNode("if", $3, createNode("if_body", $6, NULL));
-    }
-    ;
+        {
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            $$ = createNode("if", $3, createNode("if_body", $6, NULL));
+
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+        }
+;
+
 
 /* Used to parse while loops. */
 while_statement:
     WHILE LPAREN expression RPAREN LBRACE statements_list RBRACE
-    {
-        $$ = createNode("while", $3, createNode("body", $6, NULL));
-    }
-    ;
+        {
+            /* Push a new symbol table for while loop scope */
+            symbol_table *whileTable = createSymbolTable();
+            pushSymbolTable(whileTable);
+
+            $$ = createNode("while", $3, createNode("body", $6, NULL));
+
+            popSymbolTable(); /* Pop the symbol table after exiting while loop scope */
+        }
+;
+
 
 /* Used to parse do-while loops. */
 do_while_statement:
     DO LBRACE statements_list RBRACE WHILE LPAREN expression RPAREN SEMICOLON
-    {
-        $$ = createNode("do_while", $3, $7);
-    }
-    ;
+        {
+            /* Push a new symbol table for do-while loop scope */
+            symbol_table *doWhileTable = createSymbolTable();
+            pushSymbolTable(doWhileTable);
+
+            $$ = createNode("do_while", $3, $7);
+
+            popSymbolTable(); /* Pop the symbol table after exiting do-while loop scope */
+        }
+;
 
 /* Used to parse for loops. */
 for_statement:
     FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN LBRACE statements_list RBRACE
-    {
-        node* initialization = $3;
-        node* condition = $5;
-        node* increment = $7;
-        node* body = $10;
-        $$ = createNode("for", initialization, createNode("for_body", condition, createNode("for_increment", increment, body)));
-    }
+        {
+            /* Push a new symbol table for for loop scope */
+            symbol_table *forTable = createSymbolTable();
+            pushSymbolTable(forTable);
+
+            node* initialization = $3;
+            node* condition = $5;
+            node* increment = $7;
+            node* body = $10;
+
+            $$ = createNode("for", initialization, createNode("for_body", condition, createNode("for_increment", increment, body)));
+
+            popSymbolTable(); /* Pop the symbol table after exiting for loop scope */
+        }
     ;
 
 expression:
     /* Literals and Identifiers */
-    IDENTIFIER { $$ = createNode($1, NULL, NULL); }
+    IDENTIFIER
+        {
+            symbol_table_entry* entry = lookupSymbolTable($1);
+            if (entry == NULL) {
+                yyerror("Undeclared identifier: %s", $1);
+                YYABORT;
+            }
+            $$ = createNode($1, NULL, NULL);
+        }
     | INT_LITERAL { $$ = createNode($1, NULL, NULL); }
     | CHAR_LITERAL { $$ = createNode($1, NULL, NULL); }
     | STRING_LITERAL { $$ = createNode($1, NULL, NULL); }
