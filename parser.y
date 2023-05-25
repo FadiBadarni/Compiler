@@ -25,6 +25,7 @@
         char *name;
         char *type;
         argument_entry *arguments;
+        char *return_type;
         struct symbol_table_entry *next;
     } symbol_table_entry;
 
@@ -73,21 +74,24 @@
     void printSymbolTable(symbol_table* table)
     {
         printf("Symbol Table:\n");
-        printf("+----------------------+----------------------+\n");
-        printf("|        Name          |        Type          |\n");
-        printf("+----------------------+----------------------+\n");
+        printf("+----------------------+----------------------+----------------------+\n");
+        printf("|        Name          |        Type          |   Return Type (Fn)   |\n");
+        printf("+----------------------+----------------------+----------------------+\n");
 
         symbol_table_entry* entry = table->head;
         while (entry != NULL)
         {
-            printf("| %-20s | %-20s |\n", entry->name, entry->type);
+            if (strcmp(entry->type, "function") == 0) {
+                printf("| %-20s | %-20s | %-20s |\n", entry->name, entry->type, entry->return_type != NULL ? entry->return_type : "N/A");
+            } else {
+                printf("| %-20s | %-20s | %-20s |\n", entry->name, entry->type, "N/A");
+            }
             // Print a separator between entries
-            printf("+----------------------+----------------------+\n");
+            printf("+----------------------+----------------------+----------------------+\n");
 
             entry = entry->next;
         }
     }
-
 
     void pushSymbolTable(symbol_table *table)
     {
@@ -177,6 +181,20 @@
         return 0;
     }
 
+    void setFunctionReturnType(char *functionName, char *returnType) {
+        /* Retrieve the function's entry from the symbol table */
+
+        symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
+
+        if (functionEntry == NULL) {
+            fprintf(stderr, "Error: Function not found in the symbol table\n");
+            return;
+        }
+        /* Set the return type */
+        functionEntry->return_type = strdup(returnType);
+
+    }
+
     void addArgumentToFunction(char *functionName, char *argumentName, char *argumentType) {
         /* Retrieve the function's entry from the symbol table */
         symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
@@ -212,7 +230,6 @@
         int count = 0;
         argument_entry *arg = entry->arguments;
         while(arg != NULL) {
-            printf("Argument name: %s\n", arg->name);
             count++;
             arg = arg->next;
         }
@@ -226,17 +243,46 @@
     int countNodes(node *n) {
         int count = 0;
         while (n != NULL) {
-            if (strcmp(n->token, "arguments") == 0) {
-                node *argNode = n->left;
-                count += countNodes(argNode);
-                if(n->right != NULL){
-                    count++;
-                }
+            if (strcmp(n->token, "argument") == 0) {
+                // Increment count for each argument node
+                count++;
+
+                // Move to the next argument (right child)
+                n = n->right;
             }
-            n = n->right;
         }
         return count;
     }
+
+
+    char* getTypeOfExpression(node* expr) {
+        if (expr == NULL) {
+            return NULL;
+        }
+
+        /* If it's a binary operation, check the types of both operands */
+        if (expr->left && expr->right) {
+            symbol_table_entry* leftEntry = lookupSymbolTable(expr->left->token);
+            symbol_table_entry* rightEntry = lookupSymbolTable(expr->right->token);
+
+            /* If either of the entries does not exist in the symbol table, or they are of different types, return NULL */
+            if (leftEntry == NULL || rightEntry == NULL || strcmp(leftEntry->type, rightEntry->type) != 0) {
+                return NULL;
+            }
+
+            /* Otherwise, return the type of one of them */
+            return leftEntry->type;
+        }
+        /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
+        else {
+            symbol_table_entry* entry = lookupSymbolTable(expr->token);
+            if (entry != NULL) {
+                return entry->type;
+            }
+        }
+        return NULL;
+    }
+
 
     int checkBinaryOperationType(node *left, node *right, char *operation) {
         symbol_table_entry *leftEntry = lookupSymbolTable(left->token);
@@ -367,8 +413,10 @@ subroutine:
         }
     arguments RPAREN COLON type
         {
+            /* Extract the return type */
+            setFunctionReturnType(currentFunction, $8->token);
         }
-    LBRACE statements_list
+    LBRACE statements_list RBRACE
         {
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
@@ -377,9 +425,7 @@ subroutine:
             /* Clear currentFunction since we're done parsing the function */
             free(currentFunction);
             currentFunction = NULL;
-        }
-    RBRACE
-        {
+
             $$ = createNode("function", createNode($2, createNode("arguments", $5, NULL), createNode("return_type", $8, NULL)), createNode("body", $11, NULL));
         }
     | FUNCTION IDENTIFIER LPAREN RPAREN COLON VOID
@@ -427,13 +473,6 @@ main:
             symbol_table *globalTable = current_table;
             while (globalTable->prev != NULL) {
                 globalTable = globalTable->prev;
-            }
-
-            symbol_table_entry *existingEntry = lookupSymbolTable("main");
-
-            if (existingEntry != NULL) {
-                yyerror("Error: The program can only have one main function.");
-                YYABORT;
             }
 
             /* Add the main function name to the symbol table */
@@ -509,14 +548,9 @@ argument:
 /* Used to parse lists of identifiers, separated by commas. */
 identifiers_list:
     IDENTIFIER { $$ = createNode(strdup($1), NULL, NULL); }
-    | IDENTIFIER COMMA identifiers_list {
-        char* new_identifier = malloc(strlen($1) + strlen($3->token) + 2);  // for the space and the null terminator
-        strcpy(new_identifier, $1);
-        strcat(new_identifier, " ");
-        strcat(new_identifier, $3->token);
-        $$ = createNode(new_identifier, NULL, NULL);
-      }
-    ;
+    | IDENTIFIER COMMA identifiers_list { $$ = createNode(strdup($1), NULL, $3); }
+;
+
 
 /* Used to parse lists of statements. */
 statements_list:
@@ -579,7 +613,7 @@ statement:
                     yyerror("Variable redeclaration or memory allocation error");
                     YYABORT;
                 }
-                id_node = id_node->left; // or right, depends on how you organize the identifiers list
+                id_node = id_node->right;
             }
         }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
@@ -620,6 +654,25 @@ statement:
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
         {
+            /* Retrieve the function's entry from the symbol table */
+            symbol_table_entry *functionEntry = lookupSymbolTable(currentFunction);
+            if (functionEntry == NULL) {
+                yyerror("Error: Function not found in the symbol table");
+                YYABORT;
+            }
+
+            /* Get the expected return type of the function */
+            char* expectedReturnType = functionEntry->return_type;
+
+            /* Get the type of the actual return expression */
+            char* actualReturnType = getTypeOfExpression($2);
+
+            /* Compare the expected return type with the actual return type */
+            if (strcmp(expectedReturnType, actualReturnType) != 0) {
+                yyerror("Error: Type mismatch in return statement");
+                YYABORT;
+            }
+
             $$ = createNode("return", $2, NULL); // handle return statement
         }
     | subroutine
@@ -660,17 +713,31 @@ function_call:
                 YYABORT;
             }
             int numCallArgs = countNodes($3);
-            // if (countArguments(existingEntry) != numCallArgs) {
-            //     yyerror("Error: Wrong number of arguments in function call");
-            //     YYABORT;
-            // }
+            if (countArguments(existingEntry) != numCallArgs) {
+                yyerror("Error: Wrong number of arguments in function call");
+                YYABORT;
+            }
+
+            argument_entry *argument = existingEntry->arguments;
+            node *callArgument = $3;
+
+            //TODO: THE TYPES ARE BEING MATCHED ONLY IN REVERSE.
+            while (argument != NULL && callArgument != NULL) {
+                if (strcmp(argument->type, getTypeOfExpression(callArgument->left)) != 0) {
+                    yyerror("Error: Argument type mismatch in function callz");
+                    YYABORT;
+                }
+                argument = argument->next;
+                callArgument = callArgument->right;
+            }
+
             $$ = createNode("call", createNode($1, createNode("arguments", $3, NULL), NULL), NULL);
         } // handle function call with arguments
 ;
 
 function_call_arguments:
     expression { $$ = createNode("argument", $1, NULL); } // single argument
-    | function_call_arguments COMMA expression { $$ = createNode("argument", $1, $3); } // multiple arguments
+    | function_call_arguments COMMA expression { $$ = createNode("argument", $3, $1); } // multiple arguments
 ;
 
 
@@ -688,6 +755,14 @@ code_block:
 if_statement:
     IF LPAREN expression RPAREN LBRACE statements_list RBRACE ELSE LBRACE statements_list RBRACE
         {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                yyerror("Error: Condition of an if statement must be of type bool");
+                YYABORT;
+            }
+
             /* Push a new symbol table for if statement scope */
             symbol_table *ifTable = createSymbolTable();
             pushSymbolTable(ifTable);
