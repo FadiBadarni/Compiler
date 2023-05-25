@@ -150,13 +150,13 @@
         return NULL;
     }
 
-    void addSymbolTableEntry(char *name, char *type)
+    int addSymbolTableEntry(char *name, char *type)
     {
         /* Check if the name already exists in the current scope */
         symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope(name);
         if (existingEntry != NULL) {
             fprintf(stderr, "Error: Name %s is already declared in the current scope\n", name);
-            return;
+            return -1;
         }
 
         /* If name does not exist in current scope, add it */
@@ -164,7 +164,7 @@
         if (entry == NULL)
         {
             fprintf(stderr, "Error: Unable to allocate memory for symbol table entry\n");
-            return;
+            return -1;
         }
         entry->name = strdup(name);
         entry->type = strdup(type);
@@ -173,6 +173,8 @@
 
         printf("Added symbol to table. Current table:\n");
         printSymbolTable(current_table);
+
+        return 0;
     }
 
     void addArgumentToFunction(char *functionName, char *argumentName, char *argumentType) {
@@ -236,8 +238,53 @@
         return count;
     }
 
+    int checkBinaryOperationType(node *left, node *right, char *operation) {
+        symbol_table_entry *leftEntry = lookupSymbolTable(left->token);
+        symbol_table_entry *rightEntry = lookupSymbolTable(right->token);
+        if (leftEntry == NULL || rightEntry == NULL) {
+            yyerror("Error: Undefined variable\n");
+            return -1;
+        }
 
+         /* Handle arithmetic operations */
+        if ((strcmp(operation, "+") == 0 || strcmp(operation, "-") == 0 ||
+            strcmp(operation, "*") == 0 || strcmp(operation, "/") == 0) &&
+            (strcmp(leftEntry->type, "int") != 0 || strcmp(rightEntry->type, "int") != 0)) {
+            yyerror("Error: Invalid types for operation. Operands must be of the same type");
+            return -1;
+        }
 
+        /* Handle logical operations */
+        else if ((strcmp(operation, "&&") == 0 || strcmp(operation, "||") == 0) &&
+                (strcmp(leftEntry->type, "bool") != 0 || strcmp(rightEntry->type, "bool") != 0)) {
+            yyerror("Error: Invalid types for operation. Expected bool & bool\n");
+            return -1;
+        }
+
+        /* Handle comparison operations */
+        else if ((strcmp(operation, "==") == 0 || strcmp(operation, "!=") == 0 ||
+                strcmp(operation, "<") == 0 || strcmp(operation, ">") == 0 ||
+                strcmp(operation, "<=") == 0 || strcmp(operation, ">=") == 0) &&
+                (strcmp(leftEntry->type, rightEntry->type) != 0)) {
+            yyerror("Error: Invalid types for operation. Operands must be of the same type\n");
+            return -1;
+        }
+        return 0;
+    }
+
+    int checkUnaryOperationType(node *operand, char *operation) {
+        symbol_table_entry *entry = lookupSymbolTable(operand->token);
+        if (entry == NULL) {
+            yyerror("Error: Undefined variable\n");
+            return -1;
+        }
+        if (strcmp(operation, "!") == 0 && strcmp(entry->type, "bool") != 0) {
+            yyerror("Error: Invalid type for operation '!'. Operand must be of type bool\n");
+            return -1;
+        }
+        // Add more checks here to support more unary operations
+        return 0;
+    }
 
 
 %}
@@ -474,8 +521,8 @@ identifiers_list:
 
 /* Used to parse lists of statements. */
 statements_list:
-    statement
-    | statements_list statement { $$ = createNode("statements_list", $1, $2); }
+    statement  { $$ = createNode("statements", $1, NULL); }
+    | statements_list statement  { $$ = createNode("statements", $1, $2); }
     ;
 
 
@@ -488,7 +535,19 @@ statement:
     | VAR identifiers_list COLON POINTER_TYPE SEMICOLON
         { $$ = createNode("declare_pointer", $2, createNode($4, NULL, NULL)); } // handle pointer variable declaration
     | VAR identifiers_list COLON type SEMICOLON
-        { $$ = createNode("declare", $2, $4); } // handle variable declaration
+        {
+            $$ = createNode("declare", $2, $4);
+
+            // Assuming $2 is a linked list of identifier names
+            node* id_node = $2;
+            while(id_node != NULL) {
+                if (addSymbolTableEntry(id_node->token, $4->token) == -1) {
+                    yyerror("Variable redeclaration or memory allocation error");
+                    YYABORT;
+                }
+                id_node = id_node->left; // or right, depends on how you organize the identifiers list
+            }
+        }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         { $$ = createNode("=", createNode($1, NULL, NULL), $3); } // handle variable assignment
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
@@ -613,79 +672,107 @@ for_statement:
     ;
 
 expression:
-    function_call
-    |
-    IDENTIFIER
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: IDENTIFIER
-    | INT_LITERAL
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: INT_LITERAL
-    | CHAR_LITERAL
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: CHAR_LITERAL
-    | STRING_LITERAL
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING_LITERAL
-    | BOOL_LITERAL
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: BOOL_LITERAL
-    | REAL_LITERAL
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: REAL_LITERAL
-    | CHAR
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: CHAR
-    | INT
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: INT
-    | REAL
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: REAL
-    | STRING
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: STRING
-    | BOOL
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: BOOL
-    | VOID
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: VOID
-    | NULL_PTR
-        { $$ = createNode("null", NULL, NULL); }  // Terminal: NULL_PTR
-    | POINTER_TYPE
-        { $$ = createNode($1, NULL, NULL); }  // Terminal: POINTER_TYPE
-    | ADDRESS IDENTIFIER
-        { $$ = createNode("&", createNode($2, NULL, NULL), NULL); }  // Terminal: address of variable
-    | PIPE IDENTIFIER PIPE
-        { $$ = createNode("length_of", createNode($2, NULL, NULL), NULL); }  // Retrieve the length of a string
-    | IDENTIFIER LBRACKET expression RBRACKET
-        { $$ = createNode("array_index", createNode($1, NULL, NULL), $3); }  // Retrieve a character from a string
-    | expression PLUS expression
-        { $$ = createNode("+", $1, $3); }
-    | expression MINUS expression
-        { $$ = createNode("-", $1, $3); }
-    | expression MULTI expression
-        { $$ = createNode("*", $1, $3); }
-    | expression DIVISION expression
-        { $$ = createNode("/", $1, $3); }
-    | expression AND expression
-        { $$ = createNode("&&", $1, $3); }
-    | expression OR expression
-        { $$ = createNode("||", $1, $3); }
-    | expression EQUALS expression
-        { $$ = createNode("==", $1, $3); }
-    | expression NEQ expression
-        { $$ = createNode("!=", $1, $3); }
-    | expression LT expression
-        { $$ = createNode("<", $1, $3); }
-    | expression GT expression
-        { $$ = createNode(">", $1, $3); }
-    | expression LTE expression
-        { $$ = createNode("<=", $1, $3); }
-    | expression GTE expression
-        { $$ = createNode(">=", $1, $3); }
-    | NOT expression
-        { $$ = createNode("!", $2, NULL); }
-    | '(' expression ')'
-        { $$ = $2; }
+    /* Literals and Identifiers */
+    IDENTIFIER { $$ = createNode($1, NULL, NULL); }
+    | INT_LITERAL { $$ = createNode($1, NULL, NULL); }
+    | CHAR_LITERAL { $$ = createNode($1, NULL, NULL); }
+    | STRING_LITERAL { $$ = createNode($1, NULL, NULL); }
+    | BOOL_LITERAL { $$ = createNode($1, NULL, NULL); }
+    | REAL_LITERAL { $$ = createNode($1, NULL, NULL); }
+    /* Type Keywords */
+    | CHAR { $$ = createNode($1, NULL, NULL); }
+    | INT { $$ = createNode($1, NULL, NULL); }
+    | REAL { $$ = createNode($1, NULL, NULL); }
+    | STRING { $$ = createNode($1, NULL, NULL); }
+    | BOOL { $$ = createNode($1, NULL, NULL); }
+    | VOID { $$ = createNode($1, NULL, NULL); }
+    /* Special Expressions */
+    | NULL_PTR { $$ = createNode("null", NULL, NULL); }
+    | POINTER_TYPE { $$ = createNode($1, NULL, NULL); }
+    | ADDRESS IDENTIFIER { $$ = createNode("&", createNode($2, NULL, NULL), NULL); }
+    | PIPE IDENTIFIER PIPE { $$ = createNode("length_of", createNode($2, NULL, NULL), NULL); }
+    | IDENTIFIER LBRACKET expression RBRACKET { $$ = createNode("array_index", createNode($1, NULL, NULL), $3); }
+    /* Binary Operations */
+    | expression PLUS expression {
+        if(checkBinaryOperationType($1, $3, "+") == -1)
+            YYABORT;
+        $$ = createNode("+", $1, $3);
+    }
+    | expression MINUS expression {
+        if(checkBinaryOperationType($1, $3, "-") == -1)
+            YYABORT;
+        $$ = createNode("-", $1, $3);
+    }
+    | expression MULTI expression {
+        if(checkBinaryOperationType($1, $3, "*") == -1)
+            YYABORT;
+        $$ = createNode("*", $1, $3);
+    }
+    | expression DIVISION expression {
+        if(checkBinaryOperationType($1, $3, "/") == -1)
+            YYABORT;
+        $$ = createNode("/", $1, $3);
+    }
+    | expression AND expression {
+        if(checkBinaryOperationType($1, $3, "&&") == -1)
+            YYABORT;
+        $$ = createNode("&&", $1, $3);
+    }
+    | expression OR expression {
+        if(checkBinaryOperationType($1, $3, "||") == -1)
+            YYABORT;
+        $$ = createNode("||", $1, $3);
+    }
+    | expression EQUALS expression {
+        if(checkBinaryOperationType($1, $3, "==") == -1)
+            YYABORT;
+        $$ = createNode("==", $1, $3);
+    }
+    | expression NEQ expression {
+        if(checkBinaryOperationType($1, $3, "!=") == -1)
+            YYABORT;
+        $$ = createNode("!=", $1, $3);
+    }
+    | expression LT expression {
+        if(checkBinaryOperationType($1, $3, "<") == -1)
+            YYABORT;
+        $$ = createNode("<", $1, $3);
+    }
+    | expression GT expression {
+        if(checkBinaryOperationType($1, $3, ">") == -1)
+            YYABORT;
+        $$ = createNode(">", $1, $3);
+    }
+    | expression LTE expression {
+        if(checkBinaryOperationType($1, $3, "<=") == -1)
+            YYABORT;
+        $$ = createNode("<=", $1, $3);
+    }
+    | expression GTE expression {
+        if(checkBinaryOperationType($1, $3, ">=") == -1)
+            YYABORT;
+        $$ = createNode(">=", $1, $3);
+    }
+    /* Unary Operations */
+    | NOT expression {
+        if(checkUnaryOperationType($2, "!") == -1)
+            YYABORT;
+        $$ = createNode("!", $2, NULL);
+    }
+    /* Parenthesized Expression */
+    | '(' expression ')' { $$ = $2; }
+    /* Function Call */
+    | function_call
     ;
 
 type:
-    BOOL   { $$ = createNode($1, NULL, NULL); }
-    | CHAR { $$ = createNode($1, NULL, NULL); }
-    | INT   { $$ = createNode($1, NULL, NULL); }
-    | REAL  { $$ = createNode($1, NULL, NULL); }
-    | STRING { $$ = createNode($1, NULL, NULL); }
+    BOOL { $$ = createNode("bool", NULL, NULL); }
+    | CHAR { $$ = createNode("char", NULL, NULL); }
+    | INT { $$ = createNode("int", NULL, NULL); }
+    | REAL { $$ = createNode("real", NULL, NULL); }
+    | STRING { $$ = createNode("string", NULL, NULL); }
     ;
+
 
 
 
