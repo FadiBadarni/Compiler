@@ -487,6 +487,20 @@
         }
     }
 
+    node* reverseTree(node* root)
+    {
+        if(root == NULL || root->right == NULL)
+        {
+            return root;
+        }
+
+        node* newRoot = reverseTree(root->right);
+
+        root->right->right = root;
+        root->right = NULL;
+
+        return newRoot;
+    }
 
 
 %}
@@ -512,7 +526,7 @@
 
 %type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
-%type <node> program
+%type <node> program return_type
 %type <node> code_block if_statement while_statement do_while_statement for_statement factor term unary atom
 
 %left OR
@@ -542,7 +556,7 @@ subroutines:
 
 /* A subroutine can either be a function, which returns a specific type, or a procedure, which does not return anything. */
 subroutine:
-    FUNCTION IDENTIFIER LPAREN RPAREN COLON type
+    FUNCTION IDENTIFIER LPAREN RPAREN COLON return_type
         {
             /* Check if a function with the same name is already declared in the current scope */
             symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
@@ -601,7 +615,7 @@ subroutine:
             pushSymbolTable(newTable);
 
         }
-    arguments RPAREN COLON type
+    arguments RPAREN COLON return_type
         {
             /* Extract the return type */
             setFunctionReturnType(currentFunction, $8->token);
@@ -727,6 +741,26 @@ statement:
                 id_node = id_node->right;
             }
         }
+    | IDENTIFIER ASSIGNMENT function_call SEMICOLON
+        {
+            // Check if variable has been declared
+            symbol_table_entry* entry = lookupSymbolTable($1);
+            if (entry == NULL) {
+                yyerror("Variable not defined");
+                YYABORT;
+            }
+
+            // /* Get the return type of the function call */
+            // char* returnType = getReturnTypeOfFunctionCall($3);
+
+            // /* Compare the expected return type with the actual return type */
+            // if (strcmp(entry->type, returnType) != 0) {
+            //     yyerror("Type mismatch in assignment. Expected: %s, Found: %s", entry->type, returnType);
+            //     YYABORT;
+            // }
+
+            $$ = createNode("=", createNode($1, NULL, NULL), $3);
+        }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         {
             $$ = createNode("=", createNode($1, NULL, NULL), $3);
@@ -844,10 +878,11 @@ function_call:
             argument_entry *argument = existingEntry->arguments;
             node *callArgument = $3;
 
-            //TODO: THE TYPES ARE BEING MATCHED ONLY IN REVERSE.
+            callArgument = reverseTree(callArgument);
+
             while (argument != NULL && callArgument != NULL) {
                 if (strcmp(argument->type, getTypeOfExpression(callArgument->left)) != 0) {
-                    yyerror("Error: Argument type mismatch in function callz");
+                    yyerror("Error: Argument type mismatch in function call");
                     YYABORT;
                 }
                 argument = argument->next;
@@ -1133,8 +1168,11 @@ atom:
     | IDENTIFIER LBRACKET expression RBRACKET { $$ = createNode("array_index", createNode($1, NULL, NULL), $3); }
     /* Parenthesized Expression */
     | LPAREN expression RPAREN { $$ = $2; }
-    /* Function Call */
-    | function_call
+    ;
+
+return_type:
+    VOID { $$ = createNode("void", NULL, NULL); }
+    | type
     ;
 
 type:
