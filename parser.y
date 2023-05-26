@@ -45,6 +45,9 @@
     symbol_table *current_table = NULL; // this points to the top of the stack
     char* currentFunction = NULL;
 
+    int labelCounter = 0;  // For generating unique labels
+    int tempVarCounter = 0;  // For generating unique temporary variables
+
     int printlevel=0;
     node *root;
 
@@ -1359,10 +1362,8 @@ type:
 
 %%
 
-int tempVarCount = 0;
-
-int isOperatorz(char* token) {
-    // You can add more operators based on your language here
+int isOperator2(char* token) {
+    // add more operators based on language here
     if (strcmp(token, "+") == 0 || strcmp(token, "-") == 0 || strcmp(token, "*") == 0 || strcmp(token, "/") == 0) {
         return 1;
     }
@@ -1385,24 +1386,6 @@ node* createNode(char* token, node *left, node *right) {
 
     newNode->left = left;
     newNode->right = right;
-
-    if (isOperatorz(token)) {
-        // Allocate memory for the temporary variable
-        char *tempVar = (char*)malloc(10*sizeof(char));
-        // Generate the temporary variable name
-        sprintf(tempVar, "t%d", tempVarCount++);
-
-        // Allocate memory for the TAC
-        char *newTac = (char*)malloc(100*sizeof(char));
-
-        // Create the TAC for the operation
-        sprintf(newTac, "%s = %s %s %s", tempVar, left->tac, token, right->tac);
-
-        newNode->tac = newTac;
-    } else {
-        // for leaf nodes, TAC code is the token itself
-        newNode->tac = strdup(token);
-    }
 
     return newNode;
 }
@@ -1488,27 +1471,46 @@ void printTree(node *tree)
     }
 }
 
-void printThreeAddressCode(node *tree) {
+void printThreeAddressCode(node *tree, int indentLevel) {
     if (tree == NULL) return;
 
     if (strcmp(tree->token, "procedure") == 0) {
-        printf("%s:\n", tree->left->token); // function name
-        printf("BeginFunc\n");
-        printThreeAddressCode(tree->right); // function body
-        printf("EndFunc\n");
+        indent(indentLevel);
+        printf("%s:\n", tree->left->token);
+        indent(indentLevel);
+        printf("\tBeginProc\n");
+        printThreeAddressCode(tree->right, indentLevel + 2);
+        indent(indentLevel - 1);
+        printf("\tL%d: EndProc\n", labelCounter++);
     }
+    else {
+        // Generate Three Address Code recursively in post-order
+        printThreeAddressCode(tree->left, indentLevel);
+        printThreeAddressCode(tree->right, indentLevel);
 
-    // more else-if branches for other types of nodes...
+        if (strcmp(tree->token, "=") == 0) {
+            indent(indentLevel);
+            printf("%s = %s\n", tree->left->token, tree->right->tac);
+        }
+        else if (isOperator2(tree->token)) {
+            // Allocate memory for the temporary variable
+            char *tempVar = (char*)malloc(10*sizeof(char));
+            // Generate the temporary variable name
+            sprintf(tempVar, "t%d", tempVarCounter++);
+            tree->tac = tempVar;
 
-    // Traverse the tree
-    if (tree->left != NULL) {
-        printThreeAddressCode(tree->left);
-    }
-
-    if (tree->right != NULL) {
-        printThreeAddressCode(tree->right);
+            // Print the TAC
+            indent(indentLevel);
+            printf("%s = %s %s %s\n", tree->tac, tree->left->tac, tree->token, tree->right->tac);
+        }
+        else {
+            // Assign token itself as TAC for leaf nodes
+            tree->tac = tree->token;
+        }
     }
 }
+
+
 
 
 int yyerror(const char *fmt, ...)
@@ -1553,8 +1555,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    printf("Three Address Code:\n");
-    printThreeAddressCode(root);
+    printThreeAddressCode(root, 0);
 
     fclose(inputFile);
 
