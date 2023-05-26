@@ -12,6 +12,7 @@
         char *token;
         struct node *left;
         struct node *right;
+        char *tac;
     } node;
 
     typedef struct argument_entry
@@ -172,6 +173,7 @@
             fprintf(stderr, "Error: Unable to allocate memory for symbol table entry\n");
             return -1;
         }
+
         entry->name = strdup(name);
         entry->type = strdup(type);
         entry->next = current_table->head;
@@ -184,8 +186,8 @@
     }
 
     void setFunctionReturnType(char *functionName, char *returnType) {
-        /* Retrieve the function's entry from the symbol table */
 
+        /* Retrieve the function's entry from the symbol table */
         symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
 
         if (functionEntry == NULL) {
@@ -378,6 +380,17 @@
             }
         }
 
+        // Handle array indexing
+        if (strcmp(operation, "array_index") == 0) {
+            if (strcmp(leftType, "string") == 0 && strcmp(rightType, "int") == 0) {
+                return "char";
+            } else {
+                yyerror("Error: Invalid types for array indexing. Left operand must be of type string and right operand must be of type int");
+                return NULL;
+            }
+        }
+
+
         // Catch-all for unsupported operations
         yyerror("Error: Unsupported operation: %s", operation);
         return NULL;
@@ -534,9 +547,7 @@
         /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
         else {
             if (expr->token[0] == '&') {
-                printf("\nHandling & operator in getTypeOfExpression %s\n",expr->left->token);
                 if(strcmp(expr->left->token, "ARRAY_ELEMENT") == 0) {
-                    printf("Array access detected, array name: %s\n", expr->left->left->token);
                     symbol_table_entry* entry = lookupSymbolTable(expr->left->left->token);
                     if (entry == NULL || strcmp(entry->type, "string") != 0) {
                         yyerror("Variable not defined or not a string array");
@@ -653,6 +664,9 @@ subroutine:
             /* Add the function name to the symbol table */
             addSymbolTableEntry($2, "function");
 
+            /* Set currentFunction to the name of the function being parsed */
+            currentFunction = strdup($2);
+
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
             symbol_table *newTable = createSymbolTable();
@@ -673,6 +687,9 @@ subroutine:
         }
     RBRACE
         {
+            /* Clear currentFunction since we're done parsing the function */
+            free(currentFunction);
+            currentFunction = NULL;
             $$ = createNode("procedure", createNode($2, NULL, NULL), createNode("body", $9, NULL));
         }
     | FUNCTION IDENTIFIER LPAREN
@@ -1342,6 +1359,16 @@ type:
 
 %%
 
+int tempVarCount = 0;
+
+int isOperatorz(char* token) {
+    // You can add more operators based on your language here
+    if (strcmp(token, "+") == 0 || strcmp(token, "-") == 0 || strcmp(token, "*") == 0 || strcmp(token, "/") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
 node* createNode(char* token, node *left, node *right) {
     node *newNode = (node*)malloc(sizeof(node));
     if (newNode == NULL) {
@@ -1358,6 +1385,25 @@ node* createNode(char* token, node *left, node *right) {
 
     newNode->left = left;
     newNode->right = right;
+
+    if (isOperatorz(token)) {
+        // Allocate memory for the temporary variable
+        char *tempVar = (char*)malloc(10*sizeof(char));
+        // Generate the temporary variable name
+        sprintf(tempVar, "t%d", tempVarCount++);
+
+        // Allocate memory for the TAC
+        char *newTac = (char*)malloc(100*sizeof(char));
+
+        // Create the TAC for the operation
+        sprintf(newTac, "%s = %s %s %s", tempVar, left->tac, token, right->tac);
+
+        newNode->tac = newTac;
+    } else {
+        // for leaf nodes, TAC code is the token itself
+        newNode->tac = strdup(token);
+    }
+
     return newNode;
 }
 
@@ -1442,6 +1488,29 @@ void printTree(node *tree)
     }
 }
 
+void printThreeAddressCode(node *tree) {
+    if (tree == NULL) return;
+
+    if (strcmp(tree->token, "procedure") == 0) {
+        printf("%s:\n", tree->left->token); // function name
+        printf("BeginFunc\n");
+        printThreeAddressCode(tree->right); // function body
+        printf("EndFunc\n");
+    }
+
+    // more else-if branches for other types of nodes...
+
+    // Traverse the tree
+    if (tree->left != NULL) {
+        printThreeAddressCode(tree->left);
+    }
+
+    if (tree->right != NULL) {
+        printThreeAddressCode(tree->right);
+    }
+}
+
+
 int yyerror(const char *fmt, ...)
 {
     va_list args;
@@ -1483,6 +1552,9 @@ int main(int argc, char *argv[])
         fclose(inputFile);
         return -1;
     }
+
+    printf("Three Address Code:\n");
+    printThreeAddressCode(root);
 
     fclose(inputFile);
 
