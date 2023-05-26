@@ -313,7 +313,7 @@
 
     int isUnaryOperator(const char* token) {
         // Currently only support address-of operator
-        return strcmp(token, "&") == 0 || strcmp(token, "*") == 0;
+        return strcmp(token, "&") == 0 || strcmp(token, "*") == 0 || strcmp(token, "ARRAY_ELEMENT") == 0;
     }
 
     char* getNodeType(node *n);
@@ -437,7 +437,6 @@
             yyerror("Null node in getNodeType");
             return NULL;
         }
-
         if (n->left == NULL && n->right == NULL) { // Identifier or literal
             if (isOperator(n->token)) {
                 return NULL; // Operators don't have a type in the same sense as variables or literals
@@ -494,39 +493,68 @@
 
         /* If it's a binary operation, check the types of both operands */
         if (expr->left && expr->right) {
-            char* leftType = getNodeType(expr->left);
-            char* rightType = getNodeType(expr->right);
+            // Check if it's array access operation
+            if(strcmp(expr->token, "ARRAY_ELEMENT") == 0) {
+                char* leftType = getNodeType(expr->left); // This should be the array identifier
+                char* rightType = getNodeType(expr->right); // This should be the index
+                if (leftType == NULL || rightType == NULL) {
+                    return NULL; // Error message would have been printed already
+                }
 
-            if (leftType == NULL || rightType == NULL) {
-                return NULL; // Error message would have been printed already
+                if (strcmp(leftType, "string") != 0 || strcmp(rightType, "int") != 0) {
+                    yyerror("Invalid array access: array type is %s and index type is %s", leftType, rightType);
+                    return NULL;
+                }
+
+                return "char*"; // The type of an element in a string array is "char"
             }
+            else {
+                // For other binary operations, proceed as before
+                char* leftType = getNodeType(expr->left);
+                char* rightType = getNodeType(expr->right);
 
-            if (strcmp(leftType, rightType) != 0) {
-                yyerror("Type mismatch in binary operation: %s %s %s", leftType, expr->token, rightType);
-                return NULL;
+                if (leftType == NULL || rightType == NULL) {
+                    return NULL; // Error message would have been printed already
+                }
+
+                if (strcmp(leftType, rightType) != 0) {
+                    yyerror("Type mismatch in binary operation: %s %s", leftType, rightType);
+                    return NULL;
+                }
+
+                // The type of the operation is dependent on the operator
+                if (strcmp(expr->token, "<") == 0 || strcmp(expr->token, ">") == 0 ||
+                    strcmp(expr->token, "==") == 0 || strcmp(expr->token, "!=") == 0) {
+                    return "bool";
+                }
+
+                return leftType; // for arithmetic operations, the type of the operation is the same as the operands
             }
-
-            // The type of the operation is dependent on the operator
-            if (strcmp(expr->token, "<") == 0 || strcmp(expr->token, ">") == 0 ||
-                strcmp(expr->token, "==") == 0 || strcmp(expr->token, "!=") == 0) {
-                return "bool";
-            }
-
-            return leftType; // for arithmetic operations, the type of the operation is the same as the operands
         }
         /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
         else {
             if (expr->token[0] == '&') {
-                symbol_table_entry* entry = lookupSymbolTable(expr->left->token);
-                if (entry == NULL) {
-                    yyerror("Variable not defined");
-                    return NULL;
-                }
-                char *pointer_type = malloc(strlen(entry->type) + 2);
-                strcpy(pointer_type, entry->type);
-                strcat(pointer_type, "*");
+                printf("\nHandling & operator in getTypeOfExpression %s\n",expr->left->token);
+                if(strcmp(expr->left->token, "ARRAY_ELEMENT") == 0) {
+                    printf("Array access detected, array name: %s\n", expr->left->left->token);
+                    symbol_table_entry* entry = lookupSymbolTable(expr->left->left->token);
+                    if (entry == NULL || strcmp(entry->type, "string") != 0) {
+                        yyerror("Variable not defined or not a string array");
+                        return NULL;
+                    }
+                    return "char*";
+                } else {
+                    symbol_table_entry* entry = lookupSymbolTable(expr->left->token);
+                    if (entry == NULL) {
+                        yyerror("Variable not defined");
+                        return NULL;
+                    }
+                    char *pointer_type = malloc(strlen(entry->type) + 2);
+                    strcpy(pointer_type, entry->type);
+                    strcat(pointer_type, "*");
 
-                return pointer_type;
+                    return pointer_type;
+                }
             } else if (expr->token[0] == '*') {
                     symbol_table_entry* entry = lookupSymbolTable(expr->token + 1);
                     if (entry == NULL || strlen(entry->type) < 2 || entry->type[strlen(entry->type) - 1] != '*') {
@@ -1240,6 +1268,15 @@ unary:
 
         $$ = createNode("*", createNode($2, NULL, NULL), NULL);
     }
+    | MULTI LPAREN expression RPAREN {
+        // Check if the expression is of a pointer type
+        char* exprType = getTypeOfExpression($3);
+        if (exprType == NULL || exprType[strlen(exprType) - 1] != '*') {
+            yyerror("Expression is not of pointer type for dereferencing operation");
+            YYABORT;
+        }
+        $$ = createNode("*", $3, NULL);
+    }
     | atom
     ;
 
@@ -1270,6 +1307,18 @@ atom:
     | NULL_PTR { $$ = createNode("null", NULL, NULL); }
     | POINTER_TYPE { $$ = createNode($1, NULL, NULL); }
     | ADDRESS IDENTIFIER { $$ = createNode("&", createNode($2, NULL, NULL), NULL); }
+    | ADDRESS IDENTIFIER LBRACKET expression RBRACKET {
+        symbol_table_entry* entry = lookupSymbolTable($2);
+        if (entry == NULL) {
+            yyerror("Undeclared identifier: %s", $2);
+            YYABORT;
+        }
+        if (strcmp(entry->type, "string") != 0) {
+            yyerror("Variable is not a string array");
+            YYABORT;
+        }
+        $$ = createNode("ARRAY_ELEMENT", createNode($2, NULL, NULL), $4);
+    }
     | IDENTIFIER LBRACKET expression RBRACKET { $$ = createNode("array_index", createNode($1, NULL, NULL), $3); }
     /* Parenthesized Expression */
     | LPAREN expression RPAREN { $$ = $2; }
