@@ -1476,12 +1476,66 @@ void printThreeAddressCode(node *tree, int indentLevel) {
 
     if (strcmp(tree->token, "procedure") == 0) {
         indent(indentLevel);
-        printf("%s:\n", tree->left->token);
+        printf("\033[0;31m%s:\033[0m\n", tree->left->token);
         indent(indentLevel);
         printf("\tBeginProc\n");
         printThreeAddressCode(tree->right, indentLevel + 2);
         indent(indentLevel - 1);
-        printf("\tL%d: EndProc\n", labelCounter++);
+        printf("\t\033[0;31mL%d:\033[0m EndProc\n", labelCounter++);
+    }
+    else if (strcmp(tree->token, "if") == 0) {
+        // Three address code for 'if' condition
+        printThreeAddressCode(tree->left, indentLevel);
+
+        char *tempVar = (char*)malloc(10*sizeof(char));
+        sprintf(tempVar, "t%d", tempVarCounter++);
+        tree->left->tac = tempVar;
+        indent(indentLevel);
+        printf("%s = %s %s %s\n", tree->left->tac, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+
+        indent(indentLevel);
+        printf("if %s goto L%d\n", tree->left->tac, labelCounter);
+        int trueLabel = labelCounter++;
+
+        // Three address code for 'if' body
+        indent(indentLevel-1);
+        printf("\033[0;31mL%d:\033[0m ", trueLabel); // Print the label first
+        printThreeAddressCode(tree->right, indentLevel-1); // Then print the first statement of the if body on the same line
+    }
+   else if (strcmp(tree->token, "if_else") == 0) {
+        // Three address code for 'if' condition
+        printThreeAddressCode(tree->left, indentLevel);
+
+        char *tempVar = (char*)malloc(10*sizeof(char));
+        sprintf(tempVar, "t%d", tempVarCounter++);
+        tree->left->tac = tempVar;
+        indent(indentLevel);
+        printf("%s = %s %s %s\n", tree->left->tac, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+
+        int trueLabel = labelCounter++; // jump here if condition is true
+        int falseLabel = labelCounter++; // jump here if condition is false
+        int endLabel = labelCounter++; // jump here after executing either 'if' or 'else' block
+
+        indent(indentLevel);
+        printf("if %s goto L%d\n", tree->left->tac, trueLabel); // Jump to 'if' block if condition is true
+        indent(indentLevel);
+        printf("goto L%d\n", falseLabel); // Jump to 'else' block immediately if condition is not true
+
+        // Three address code for 'if' body
+        indent(indentLevel-1);
+        printf("L%d: ", trueLabel); // print label for 'if' body
+        printThreeAddressCode(tree->right->left, indentLevel-1);
+        indent(indentLevel);
+        printf("goto L%d\n", endLabel); // Jump to end after executing 'if' body
+
+        // Three address code for 'else' body
+        indent(indentLevel-1);
+        printf("L%d: ", falseLabel); // print label for 'else' body
+        printThreeAddressCode(tree->right->right, indentLevel-1);
+
+        // Print end label
+        indent(indentLevel-1);
+        printf("L%d:\n", endLabel); // print label for end of 'if_else' structure
     }
     else {
         // Generate Three Address Code recursively in post-order
