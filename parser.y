@@ -125,6 +125,7 @@
 
     symbol_table_entry* lookupSymbolTableInCurrentScope(char *name)
     {
+
         if (current_table == NULL) {
             return NULL;
         }
@@ -310,6 +311,10 @@
         return 0;
     }
 
+    int isUnaryOperator(const char* token) {
+        // Currently only support address-of operator
+        return strcmp(token, "&") == 0 || strcmp(token, "*") == 0;
+    }
 
     char* getNodeType(node *n);
 
@@ -340,7 +345,7 @@
             if (strcmp(leftType, "bool") == 0 && strcmp(rightType, "bool") == 0) {
                 return "bool";
             } else {
-                yyerror("Error: Invalid types for operation. Operands must be of type bool");
+                yyerror("Error: Invalid types for operation. Operands must be of type bool %s %s", leftType, rightType);
                 return NULL;
             }
         }
@@ -362,7 +367,13 @@
             if (strcmp(leftType, rightType) == 0) {
                 return "bool";
             } else {
-                yyerror("Error: Invalid types for operation. Operands must be of the same type");
+                // Handle the case of comparing a pointer with a non-pointer
+                if ((leftType[0] == '*' && strcmp(leftType, rightType + 1) == 0) ||
+                    (rightType[strlen(rightType) - 1] == '*' && strcmp(rightType, leftType + 1) == 0)) {
+                    return "bool";
+                }
+
+                yyerror("Error: Invalid types for operation. Operands must be of the same type or compatible pointer types");
                 return NULL;
             }
         }
@@ -372,22 +383,39 @@
         return NULL;
     }
 
-    int checkUnaryOperationType(node *operand, char *operation) {
+    char* checkUnaryOperationType(node *operand, char *operation) {
         symbol_table_entry *entry = lookupSymbolTable(operand->token);
         if (entry == NULL) {
             yyerror("Error: Undefined variable\n");
-            return -1;
+            return NULL;
         }
         if (strcmp(operation, "!") == 0 && strcmp(entry->type, "bool") != 0) {
             yyerror("Error: Invalid type for operation '!'. Operand must be of type bool\n");
-            return -1;
+            return NULL;
         }
         if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "int") == 0 || strcmp(entry->type, "real") == 0)) {
             yyerror("Error: Invalid type for operation 'abs'. Operand must be of type int or real\n");
-            return -1;
+            return NULL;
         }
-        // Add more checks here to support more unary operations
-        return 0;
+        if (strcmp(operation, "&") == 0) {
+            char* type = malloc(strlen(entry->type) + 2); // Allow space for '*' and '\0'
+            strcpy(type, entry->type);
+            strcat(type, "*");
+            return type;
+        }
+        // Handle dereference operation
+        if (strcmp(operation, "*") == 0) {
+            if (entry->type[strlen(entry->type) - 1] != '*') {
+                yyerror("Error: Invalid type for dereference operation. Operand must be of pointer type\n");
+                return NULL;
+            }
+
+            // remove the last character (*) to get the dereferenced type
+            char *dereferenced_type = strdup(entry->type);
+            dereferenced_type[strlen(dereferenced_type) - 1] = '\0';
+            return dereferenced_type;
+        }
+        return entry->type;
     }
 
     /* A helper function to check whether a token is an operator */
@@ -404,8 +432,6 @@
         return false;
     }
 
-
-    /* getNodeType function, updated to use isOperator */
     char* getNodeType(node *n) {
         if (n == NULL) {
             yyerror("Null node in getNodeType");
@@ -435,7 +461,14 @@
             }
             return entry->type;
         }
-        else { // Non-leaf node, represents an operation
+        else if (n->right == NULL) { // Unary operation
+            if (!isUnaryOperator(n->token)) {
+                yyerror("Unexpected operator in unary operation");
+                return NULL;
+            }
+            return checkUnaryOperationType(n->left, n->token);
+        }
+        else { // Binary operation
             if (n->left == NULL || n->right == NULL) {
                 yyerror("Missing operand in binary operation");
                 return NULL;
@@ -483,7 +516,31 @@
         }
         /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
         else {
-            return getNodeType(expr);
+            if (expr->token[0] == '&') {
+                symbol_table_entry* entry = lookupSymbolTable(expr->left->token);
+                if (entry == NULL) {
+                    yyerror("Variable not defined");
+                    return NULL;
+                }
+                char *pointer_type = malloc(strlen(entry->type) + 2);
+                strcpy(pointer_type, entry->type);
+                strcat(pointer_type, "*");
+
+                return pointer_type;
+            } else if (expr->token[0] == '*') {
+                    symbol_table_entry* entry = lookupSymbolTable(expr->token + 1);
+                    if (entry == NULL || strlen(entry->type) < 2 || entry->type[strlen(entry->type) - 1] != '*') {
+                        yyerror("Variable not defined or not a pointer");
+                        return NULL;
+                    }
+
+                    // remove the last character (*) to get the dereferenced type
+                    char *dereferenced_type = strdup(entry->type);
+                    dereferenced_type[strlen(dereferenced_type) - 1] = '\0';
+                    return dereferenced_type;
+            } else {
+                return getNodeType(expr);
+            }
         }
     }
 
@@ -716,15 +773,18 @@ statements_list:
 statement:
      VAR identifiers_list COLON POINTER_TYPE SEMICOLON
         {
-            $$ = createNode("declare_pointer", $2, createNode("pointer", NULL, NULL));
+            $$ = createNode("declare_pointer", $2, createNode($4, NULL, NULL));
 
             node* id_node = $2;
             while(id_node != NULL) {
-                if (addSymbolTableEntry(id_node->token, "pointer") == -1) {
+                char *type = malloc(strlen($4) + 2);
+                strcat(type, $4);
+                if (addSymbolTableEntry(id_node->token, type) == -1) {
                     yyerror("Variable redeclaration or memory allocation error");
                     YYABORT;
                 }
                 id_node = id_node->left;
+                free(type);
             }
         }
     | VAR identifiers_list COLON type SEMICOLON
@@ -783,7 +843,39 @@ statement:
                 YYABORT;
             }
         }
+    | MULTI IDENTIFIER ASSIGNMENT expression SEMICOLON
+        {
+            // Check if variable has been declared
+            symbol_table_entry* entry = lookupSymbolTable($2);
+            if (entry == NULL) {
+                yyerror("Variable not defined");
+                YYABORT;
+            }
+            if (entry->type[strlen(entry->type) - 1] != '*') {
+                yyerror("Variable is not a pointer");
+                YYABORT;
+            }
 
+            // Create a new string to store the type pointed to by the pointer
+            char* pointed_type = strdup(entry->type);
+            pointed_type[strlen(pointed_type) - 1] = '\0'; // Remove the '*' at the end of the string
+
+            // Check if the type of the expression matches the type pointed to by the pointer
+            char* expression_type = getTypeOfExpression($4);
+            if (expression_type == NULL) {
+                // An error message would have been printed by getTypeOfExpression
+                free(pointed_type);
+                YYABORT;
+            }
+            if (strcmp(pointed_type, expression_type) != 0) {
+                yyerror("Type mismatch in assignment. Expected: %s, Found: %s", pointed_type, expression_type);
+                free(pointed_type);
+                YYABORT;
+            }
+            free(pointed_type);
+
+            $$ = createNode("=", createNode("*", createNode($2, NULL, NULL), NULL), $4);
+        }
     //TODO: MIGHT NEED CHANGING IN SYNTAX
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
         {
@@ -952,7 +1044,6 @@ if_statement:
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
-            printf("\n REACHED %s \n", expressionType);
             if (strcmp(expressionType, "bool") != 0) {
                 yyerror("Error: Condition of an if statement must be of type bool");
                 YYABORT;
@@ -1119,7 +1210,7 @@ factor:
 unary:
     /* Unary operation */
     NOT unary {
-        if(checkUnaryOperationType($2, "!") == -1)
+        if(checkUnaryOperationType($2, "!") == NULL)
             YYABORT;
         $$ = createNode("!", $2, NULL);
     }
@@ -1134,6 +1225,20 @@ unary:
             YYABORT;
         }
         $$ = createNode("abs", $2, NULL);
+    }
+    | MULTI IDENTIFIER {
+        // Check if variable has been declared
+        symbol_table_entry* entry = lookupSymbolTable($2);
+        if (entry == NULL) {
+            yyerror("Variable not defined");
+            YYABORT;
+        }
+        if (entry->type[strlen(entry->type) - 1] != '*') {
+            yyerror("Variable is not a pointer");
+            YYABORT;
+        }
+
+        $$ = createNode("*", createNode($2, NULL, NULL), NULL);
     }
     | atom
     ;
