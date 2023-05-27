@@ -44,6 +44,7 @@
     int yyerror(const char *fmt, ...);
     symbol_table *current_table = NULL; // this points to the top of the stack
     char* currentFunction = NULL;
+    int hasReturnStatement = 0;
 
     int labelCounter = 0;  // For generating unique labels
     int tempVarCounter = 0;  // For generating unique temporary variables
@@ -200,6 +201,26 @@
         /* Set the return type */
         functionEntry->return_type = strdup(returnType);
 
+    }
+
+    char* getFunctionReturnType(char *functionName) {
+        /* Find the function in the symbol table */
+        symbol_table_entry *entry = lookupSymbolTable(functionName);
+
+        /* If the function does not exist in the symbol table, return NULL */
+        if (entry == NULL) {
+            fprintf(stderr, "Error: Function %s is not declared in any scope\n", functionName);
+            return NULL;
+        }
+
+        /* If the function exists but its type is not 'function', return NULL */
+        if (strcmp(entry->type, "function") != 0) {
+            fprintf(stderr, "Error: %s is not a function\n", functionName);
+            return NULL;
+        }
+
+        /* If the function exists and its type is 'function', return its return type */
+        return entry->return_type;
     }
 
     void addArgumentToFunction(char *functionName, char *argumentName, char *argumentType) {
@@ -676,6 +697,9 @@ subroutine:
                 YYABORT;
             }
 
+            /* When we start a new function, reset the hasReturnStatement flag */
+            hasReturnStatement = 0;
+
             /* Add the function name to the symbol table */
             addSymbolTableEntry($2, "function");
 
@@ -698,9 +722,17 @@ subroutine:
         }
     LBRACE statements_list
         {
+            char *functionReturnType = getFunctionReturnType(currentFunction);
+
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
             popSymbolTable();
+
+            /* Check if a function that should have a return statement does not */
+            if(strcmp(functionReturnType, "void") != 0 && !hasReturnStatement) {
+                yyerror("Error: Function must have a return statement");
+                YYABORT;
+            }
         }
     RBRACE
         {
@@ -717,6 +749,9 @@ subroutine:
                 yyerror("Error: Function with this name is already declared in the current scope");
                 YYABORT;
             }
+
+            /* When we start a new function, reset the hasReturnStatement flag */
+            hasReturnStatement = 0;
 
             /* Add the function name to the symbol table */
             addSymbolTableEntry($2, "function");
@@ -741,6 +776,13 @@ subroutine:
         }
     LBRACE statements_list RBRACE
         {
+
+            /* Check if a function that should have a return statement does not */
+            if(strcmp(getFunctionReturnType(currentFunction), "void") != 0 && !hasReturnStatement) {
+                yyerror("Error: Function must have a return statement");
+                YYABORT;
+            }
+
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
             popSymbolTable();
@@ -753,7 +795,7 @@ subroutine:
         }
     ;
 
-
+//TODO: fix return statement segmentation fault.
 /* The main function of the program. */
 main:
     FUNCTION MAIN LPAREN RPAREN COLON VOID LBRACE
@@ -766,6 +808,8 @@ main:
 
             /* Add the main function name to the symbol table */
             addSymbolTableEntry("main", "function");
+
+            currentFunction = strdup($2);
 
             /* When we start the main function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -784,6 +828,10 @@ main:
         }
     RBRACE
         {
+            /* Clear currentFunction since we're done parsing the function */
+            free(currentFunction);
+            currentFunction = NULL;
+
             $$ = createNode("procedure", createNode("main", NULL, NULL), createNode("body", $9, NULL));
         }
     ;
@@ -968,14 +1016,25 @@ statement:
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
         {
+
+            /* Check if currentFunction is main */
+            if (strcmp(currentFunction, "main") == 0) {
+                yyerror("Error: Main function should not have a return statement");
+                YYABORT;
+            }
+
             /* Retrieve the function's entry from the symbol table */
             symbol_table_entry *functionEntry = lookupSymbolTable(currentFunction);
             if (functionEntry == NULL) {
                 yyerror("Error: Function not found in the symbol table");
                 YYABORT;
             }
+
             /* Get the expected return type of the function */
             char* expectedReturnType = functionEntry->return_type;
+
+            /* Set the hasReturnStatement flag to true */
+            hasReturnStatement = 1;
 
             /* Get the type of the actual return expression */
             char* actualReturnType = getTypeOfExpression($2);
@@ -1197,13 +1256,7 @@ for_statement:
             node* body_node = createNode("for_body", body, NULL);
 
             /* Combine the four nodes into one */
-            $$ = createNode("for_statement",
-                            createNode("for_header",
-                                       initialization_node,
-                                       createNode("for_conditions",
-                                                  condition_node,
-                                                  increment_node)),
-                            body_node);
+            $$ = createNode("for_statement",createNode("for_header",initialization_node,createNode("for_conditions",condition_node,increment_node)),body_node);
 
             popSymbolTable(); /* Pop the symbol table after exiting for loop scope */
         }
@@ -1964,8 +2017,8 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // ! WILL PRINT 3AC ONCE ACTIVATED.
-    printThreeAddressCode(root, 0);
+    // ! WILL PRINT 3AC ON ACTIVATION.
+    /* printThreeAddressCode(root, 0); */
 
     fclose(inputFile);
 
