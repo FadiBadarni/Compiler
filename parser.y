@@ -28,6 +28,7 @@
         char *type;
         argument_entry *arguments;
         char *return_type;
+        int hasReturnStatement;
         struct symbol_table_entry *next;
     } symbol_table_entry;
 
@@ -37,14 +38,21 @@
         struct symbol_table *prev;
     } symbol_table;
 
+    typedef struct function_stack_node
+    {
+        char* function_name;
+        struct function_stack_node* next;
+    } function_stack_node;
+
+
     node* createNode(char* token, node *left, node *right);
     void printTree (node *tree);
     void indent(int n);
     int yylex();
     int yyerror(const char *fmt, ...);
     symbol_table *current_table = NULL; // this points to the top of the stack
-    char* currentFunction = NULL;
-    int hasReturnStatement = 0;
+    function_stack_node** functionsStack = NULL;
+    char* peek(function_stack_node* stack);
 
     int labelCounter = 0;  // For generating unique labels
     int tempVarCounter = 0;  // For generating unique temporary variables
@@ -103,14 +111,12 @@
     {
         table->prev = current_table;
         current_table = table;
-        printf("Pushed symbol table. Current scope depth after push: %d\n", getSymbolTableDepth());
     }
 
 
     void popSymbolTable()
     {
         symbol_table *table = current_table;
-        printf("Popping symbol table. Current scope depth before pop: %d\n", getSymbolTableDepth());
         current_table = current_table->prev;
 
         symbol_table_entry* entry = table->head;
@@ -124,7 +130,6 @@
         }
 
         free(table);
-        printf("Popped symbol table. Current scope depth after pop: %d\n", getSymbolTableDepth());
     }
 
 
@@ -182,6 +187,7 @@
         entry->type = strdup(type);
         entry->next = current_table->head;
         current_table->head = entry;
+        entry->hasReturnStatement = 0;
 
         printf("Added symbol to table. Current table:\n");
         printSymbolTable(current_table);
@@ -269,7 +275,7 @@
 
         // add identifier to the symbol table
         addSymbolTableEntry(idList->token, argumentType);
-        addArgumentToFunction(currentFunction, idList->token, argumentType);
+        addArgumentToFunction(peek(*functionsStack), idList->token, argumentType);
     }
 
     int countArguments(symbol_table_entry *entry) {
@@ -370,7 +376,9 @@
                     return "real";
                 }
             } else {
-                yyerror("Error: Invalid types for operation. Operands must be int or real");
+                char errorMsg[256];
+                sprintf(errorMsg, "Error: Invalid types for operation '%s'. Operands must be int or real. Left operand is '%s', right operand is '%s'",operation, leftType, rightType);
+                yyerror(errorMsg);
                 return NULL;
             }
         }
@@ -380,7 +388,9 @@
             if (strcmp(leftType, "bool") == 0 && strcmp(rightType, "bool") == 0) {
                 return "bool";
             } else {
-                yyerror("Error: Invalid types for operation. Operands must be of type bool %s %s", leftType, rightType);
+                char errorMessage[100];
+                sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type bool, but got '%s' and '%s'", leftType, rightType);
+                yyerror(errorMessage);
                 return NULL;
             }
         }
@@ -392,7 +402,9 @@
                 (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {
                 return "bool";
             } else {
-                yyerror("Error: Invalid types for operation. Operands must be of type int or real");
+                char errorMessage[100];
+                sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type int or real, but got '%s' and '%s'", leftType, rightType);
+                yyerror(errorMessage);
                 return NULL;
             }
         }
@@ -407,8 +419,9 @@
                     (rightType[strlen(rightType) - 1] == '*' && strcmp(rightType, leftType + 1) == 0)) {
                     return "bool";
                 }
-
-                yyerror("Error: Invalid types for operation. Operands must be of the same type or compatible pointer types");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of the same type or compatible pointer types, but got '%s' and '%s'", leftType, rightType);
+                yyerror(errorMessage);
                 return NULL;
             }
         }
@@ -418,7 +431,9 @@
             if (strcmp(leftType, "string") == 0 && strcmp(rightType, "int") == 0) {
                 return "char";
             } else {
-                yyerror("Error: Invalid types for array indexing. Left operand must be of type string and right operand must be of type int");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Invalid types for array indexing. Left operand must be of type string and right operand must be of type int, but got '%s' and '%s'", leftType, rightType);
+                yyerror(errorMessage);
                 return NULL;
             }
         }
@@ -432,15 +447,21 @@
     char* checkUnaryOperationType(node *operand, char *operation) {
         symbol_table_entry *entry = lookupSymbolTable(operand->token);
         if (entry == NULL) {
-            yyerror("Error: Undefined variable\n");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Undefined variable: %s\n", operand->token);
+            yyerror(errorMessage);
             return NULL;
         }
         if (strcmp(operation, "!") == 0 && strcmp(entry->type, "bool") != 0) {
-            yyerror("Error: Invalid type for operation '!'. Operand must be of type bool\n");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid type for operation '!'. Operand must be of type bool, but got %s\n", entry->type);
+            yyerror(errorMessage);
             return NULL;
         }
         if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "int") == 0 || strcmp(entry->type, "real") == 0)) {
-            yyerror("Error: Invalid type for operation 'abs'. Operand must be of type int or real\n");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid type for operation 'abs'. Operand must be of type int or real, but got %s\n", entry->type);
+            yyerror(errorMessage);
             return NULL;
         }
         if (strcmp(operation, "&") == 0) {
@@ -452,10 +473,11 @@
         // Handle dereference operation
         if (strcmp(operation, "*") == 0) {
             if (entry->type[strlen(entry->type) - 1] != '*') {
-                yyerror("Error: Invalid type for dereference operation. Operand must be of pointer type\n");
-                return NULL;
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Invalid type for dereference operation. Operand must be of pointer type, but got %s\n", entry->type);
+                yyerror(errorMessage);
+                    return NULL;
             }
-
             // remove the last character (*) to get the dereferenced type
             char *dereferenced_type = strdup(entry->type);
             dereferenced_type[strlen(dereferenced_type) - 1] = '\0';
@@ -633,6 +655,55 @@
         return newRoot;
     }
 
+    void printStack(function_stack_node* stack)
+    {
+        if (stack == NULL) {
+            printf("Function stack is empty.\n");
+            return;
+        }
+
+        printf("Function stack:\n");
+
+        function_stack_node* current_node = stack;
+        while (current_node != NULL) {
+            printf("%s\n", current_node->function_name);
+            current_node = current_node->next;
+        }
+    }
+
+
+    void push(function_stack_node** stack, char* function_name)
+    {
+        function_stack_node* new_node = malloc(sizeof(function_stack_node));
+        new_node->function_name = strdup(function_name);
+        new_node->next = *stack;
+        *stack = new_node;
+    }
+
+    char* pop(function_stack_node** stack)
+    {
+        if (*stack == NULL) {
+            return NULL;
+        }
+
+        function_stack_node* top_node = *stack;
+        char* function_name = top_node->function_name;
+        *stack = top_node->next;
+        free(top_node);
+
+        return function_name;
+    }
+
+    char* peek(function_stack_node* stack)
+    {
+        if (stack == NULL) {
+            return NULL;
+        }
+
+        return stack->function_name;
+    }
+
+
 
 %}
 
@@ -697,14 +768,11 @@ subroutine:
                 YYABORT;
             }
 
-            /* When we start a new function, reset the hasReturnStatement flag */
-            hasReturnStatement = 0;
-
             /* Add the function name to the symbol table */
             addSymbolTableEntry($2, "function");
 
-            /* Set currentFunction to the name of the function being parsed */
-            currentFunction = strdup($2);
+            /* Push the function name onto the functionsStack */
+            push(functionsStack, strdup($2));
 
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -718,27 +786,21 @@ subroutine:
              /* Add the function name to its own symbol table (the one we just pushed) */
             addSymbolTableEntry($2, "function");
 
-            setFunctionReturnType(currentFunction, $6->token);
+            setFunctionReturnType(peek(*functionsStack), $6->token);
         }
     LBRACE statements_list
         {
-            char *functionReturnType = getFunctionReturnType(currentFunction);
+            char *functionReturnType = getFunctionReturnType(peek(*functionsStack));
 
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
             popSymbolTable();
-
-            /* Check if a function that should have a return statement does not */
-            if(strcmp(functionReturnType, "void") != 0 && !hasReturnStatement) {
-                yyerror("Error: Function must have a return statement");
-                YYABORT;
-            }
         }
     RBRACE
         {
-            /* Clear currentFunction since we're done parsing the function */
-            free(currentFunction);
-            currentFunction = NULL;
+            /* Pop the function name from the functionsStack since we're done parsing the function */
+            free(pop(functionsStack));
+
             $$ = createNode("procedure", createNode($2, NULL, NULL), createNode("body", $9, NULL));
         }
     | FUNCTION IDENTIFIER LPAREN
@@ -750,14 +812,11 @@ subroutine:
                 YYABORT;
             }
 
-            /* When we start a new function, reset the hasReturnStatement flag */
-            hasReturnStatement = 0;
-
             /* Add the function name to the symbol table */
             addSymbolTableEntry($2, "function");
 
-            /* Set currentFunction to the name of the function being parsed */
-            currentFunction = strdup($2);
+            /* Push the function name onto the functionsStack */
+            push(functionsStack, strdup($2));
 
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -767,18 +826,27 @@ subroutine:
                 YYABORT;
             }
             pushSymbolTable(newTable);
-
         }
     arguments RPAREN COLON return_type
         {
             /* Extract the return type */
-            setFunctionReturnType(currentFunction, $8->token);
+
+            setFunctionReturnType(peek(*functionsStack), $8->token);
+
         }
     LBRACE statements_list RBRACE
         {
+            /* Retrieve the function's entry from the symbol table */
+            symbol_table_entry *functionEntry = lookupSymbolTable(peek(*functionsStack));
+            if (functionEntry == NULL) {
+                yyerror("Error: Function not found in the symbol table");
+                YYABORT;
+            }
 
             /* Check if a function that should have a return statement does not */
-            if(strcmp(getFunctionReturnType(currentFunction), "void") != 0 && !hasReturnStatement) {
+            char *functionReturnType = getFunctionReturnType(peek(*functionsStack));
+
+            if(strcmp(functionReturnType, "void") != 0 && functionEntry->hasReturnStatement == 0) {
                 yyerror("Error: Function must have a return statement");
                 YYABORT;
             }
@@ -787,15 +855,12 @@ subroutine:
             so we pop its symbol table off the stack. */
             popSymbolTable();
 
-            /* Clear currentFunction since we're done parsing the function */
-            free(currentFunction);
-            currentFunction = NULL;
+            free(pop(functionsStack));
 
             $$ = createNode("function", createNode($2, createNode("arguments", $5, NULL), createNode("return_type", $8, NULL)), createNode("body", $11, NULL));
         }
     ;
 
-//TODO: fix return statement segmentation fault.
 /* The main function of the program. */
 main:
     FUNCTION MAIN LPAREN RPAREN COLON VOID LBRACE
@@ -809,7 +874,8 @@ main:
             /* Add the main function name to the symbol table */
             addSymbolTableEntry("main", "function");
 
-            currentFunction = strdup($2);
+            /* Push the function name to the stack */
+            push(functionsStack, strdup("main"));
 
             /* When we start the main function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -828,9 +894,8 @@ main:
         }
     RBRACE
         {
-            /* Clear currentFunction since we're done parsing the function */
-            free(currentFunction);
-            currentFunction = NULL;
+            /* Pop the function name from the stack */
+            free(pop(functionsStack));
 
             $$ = createNode("procedure", createNode("main", NULL, NULL), createNode("body", $9, NULL));
         }
@@ -871,7 +936,7 @@ argument:
 
 /* Used to parse lists of identifiers, separated by commas. */
 identifiers_list:
-    IDENTIFIER { $$ = createNode(strdup($1), NULL, NULL); }
+    IDENTIFIER {  $$ = createNode(strdup($1), NULL, NULL); }
     | IDENTIFIER COMMA identifiers_list { $$ = createNode(strdup($1), NULL, $3); }
 ;
 
@@ -1016,6 +1081,17 @@ statement:
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
         {
+            /* Retrieve the function's entry from the symbol table */
+            symbol_table_entry *functionEntry = lookupSymbolTable(peek(*functionsStack));
+            if (functionEntry == NULL) {
+                yyerror("Error: Function not found in the symbol table");
+                YYABORT;
+            }
+
+            functionEntry->hasReturnStatement = 1;
+
+            /* Peek the top of the function stack to get the name of the current function */
+            char* currentFunction = peek(*functionsStack);
 
             /* Check if currentFunction is main */
             if (strcmp(currentFunction, "main") == 0) {
@@ -1023,18 +1099,8 @@ statement:
                 YYABORT;
             }
 
-            /* Retrieve the function's entry from the symbol table */
-            symbol_table_entry *functionEntry = lookupSymbolTable(currentFunction);
-            if (functionEntry == NULL) {
-                yyerror("Error: Function not found in the symbol table");
-                YYABORT;
-            }
-
             /* Get the expected return type of the function */
             char* expectedReturnType = functionEntry->return_type;
-
-            /* Set the hasReturnStatement flag to true */
-            hasReturnStatement = 1;
 
             /* Get the type of the actual return expression */
             char* actualReturnType = getTypeOfExpression($2);
@@ -1050,6 +1116,7 @@ statement:
     | subroutine
         {
             pushSymbolTable(createSymbolTable()); // create new scope for the subroutine
+
             $$ = createNode("nested_function", $1, NULL); // handle nested function
             popSymbolTable(); // end the scope for the subroutine
         }
@@ -1509,36 +1576,36 @@ void printTree(node *tree)
     // Determine if this node is an "operator" or not
     int isOperator = (tree->left != NULL || tree->right != NULL);
 
-    // If this is the "subroutines" node, don't print it and just continue with the children
-    /* if (strcmp(tree->token, "subroutines") == 0) {
+    /* // If this is the "subroutines" node, don't print it and just continue with the children
+    if (strcmp(tree->token, "subroutines") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    } */
+    }
 
     // If this is the "arguments" node, don't print it and just continue with the children
-    /* if (strcmp(tree->token, "arguments") == 0) {
+    if (strcmp(tree->token, "arguments") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    } */
+    }
 
     // If this is the "arguments_list" node, don't print it and just continue with the children
-    /* if (strcmp(tree->token, "arguments_list") == 0) {
+    if (strcmp(tree->token, "arguments_list") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    } */
+    }
 
     // If this is the "if_else_wrapper" node, don't print it and just continue with the children
-    /* if (strcmp(tree->token, "if_else_wrapper") == 0) {
+    if (strcmp(tree->token, "if_else_wrapper") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
-    } */
+    }
 
-    // If this is the "statements_list" node, don't print it and just continue with the children
-    /* if (strcmp(tree->token, "statements_list") == 0) {
+    // If this is the "statements" node, don't print it and just continue with the children
+    if (strcmp(tree->token, "statements") == 0) {
         printTree(tree->left);
         printTree(tree->right);
         return;
@@ -2009,6 +2076,8 @@ int main(int argc, char *argv[])
     }
     pushSymbolTable(newTable);
 
+    functionsStack = malloc(sizeof(function_stack_node *));
+    *functionsStack = NULL;
 
     yyin = inputFile;
     if (yyparse() != 0) {
