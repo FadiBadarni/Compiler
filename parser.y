@@ -680,6 +680,8 @@ subroutine:
 
              /* Add the function name to its own symbol table (the one we just pushed) */
             addSymbolTableEntry($2, "function");
+
+            setFunctionReturnType(currentFunction, $6->token);
         }
     LBRACE statements_list
         {
@@ -773,6 +775,10 @@ main:
         }
     ;
 
+return_type:
+    VOID { $$ = createNode("void", NULL, NULL); }
+    | type
+    ;
 
 
 /* Represents the list of arguments in a function or procedure definition. If there are no arguments, a 'none' argument node is created. */
@@ -871,7 +877,6 @@ statement:
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         {
             $$ = createNode("=", createNode($1, NULL, NULL), $3);
-
             // Check if variable has been declared
             symbol_table_entry* entry = lookupSymbolTable($1);
             if (entry == NULL) {
@@ -950,13 +955,14 @@ statement:
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
         {
+            printf("\nHIT %s\n", currentFunction);
+
             /* Retrieve the function's entry from the symbol table */
             symbol_table_entry *functionEntry = lookupSymbolTable(currentFunction);
             if (functionEntry == NULL) {
                 yyerror("Error: Function not found in the symbol table");
                 YYABORT;
             }
-
             /* Get the expected return type of the function */
             char* expectedReturnType = functionEntry->return_type;
 
@@ -1252,6 +1258,7 @@ factor:
         $$ = createNode("/", $1, $3);
     }
     | unary
+
     ;
 
 unary:
@@ -1341,11 +1348,6 @@ atom:
     | IDENTIFIER LBRACKET expression RBRACKET { $$ = createNode("array_index", createNode($1, NULL, NULL), $3); }
     /* Parenthesized Expression */
     | LPAREN expression RPAREN { $$ = $2; }
-    ;
-
-return_type:
-    VOID { $$ = createNode("void", NULL, NULL); }
-    | type
     ;
 
 type:
@@ -1473,7 +1475,32 @@ void printTree(node *tree)
 void printThreeAddressCode(node *tree, int indentLevel) {
     if (tree == NULL) return;
 
-    if (strcmp(tree->token, "procedure") == 0) {
+    if (strcmp(tree->token, "function") == 0) {
+        // Print the function name
+        indent(indentLevel);
+        printf("\033[0;31m%s:\033[0m\n", tree->left->token);
+
+        printf("\tBeginFunc\n");
+
+        // Traverse to the body node
+        node *bodyNode = tree->right;
+        if (bodyNode != NULL) {
+            // The child of body node is 'statements'
+            node *statementsNode = bodyNode->left;
+            if(statementsNode != NULL) {
+                // Generate TAC for all statements in the body
+                printThreeAddressCode(statementsNode, indentLevel + 1);
+            }
+        }
+
+        printf("\tEndFunc\n");
+    }
+    else if (strcmp(tree->token, "return") == 0) {
+        printThreeAddressCode(tree->left, indentLevel);
+        indent(indentLevel - 1);
+        printf("\tReturn %s\n", tree->left->tac);
+    }
+    else if (strcmp(tree->token, "procedure") == 0) {
         indent(indentLevel);
         printf("\033[0;31m%s:\033[0m\n", tree->left->token);
         indent(indentLevel);
@@ -1517,23 +1544,80 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         printf("L%d:\n", endLabel + 1);
     }
     else if (strcmp(tree->token, "if") == 0) {
-        // Three address code for 'if' condition
-        printThreeAddressCode(tree->left, indentLevel);
+        int shortCircuitLabel, trueLabel, falseLabel;
+        trueLabel = labelCounter++;
 
-        char *tempVar = (char*)malloc(10*sizeof(char));
-        sprintf(tempVar, "t%d", tempVarCounter++);
-        tree->left->tac = tempVar;
-        indent(indentLevel);
-        printf("%s = %s %s %s\n", tree->left->tac, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+        if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
+            printThreeAddressCode(tree->left->left, indentLevel);
 
-        indent(indentLevel);
-        printf("if %s goto L%d\n", tree->left->tac, labelCounter);
-        int trueLabel = labelCounter++;
+            char *tempVar1 = (char*)malloc(10*sizeof(char));
+            sprintf(tempVar1, "t%d", tempVarCounter++);
+            tree->left->left->tac = tempVar1;
+
+            indent(indentLevel);
+            printf("%s = %s %s %s\n", tempVar1, tree->left->left->left->tac, tree->left->left->token, tree->left->left->right->tac);
+
+            // Left condition test and jump
+            indent(indentLevel);
+            printf("if %s goto L%d\n", tempVar1, trueLabel);
+
+            // If the first condition is false, we go to the second condition
+            shortCircuitLabel = labelCounter++;
+
+            indent(indentLevel);
+            printf("goto L%d\n", shortCircuitLabel);
+
+            // Print label for the second condition
+            indent(indentLevel - 1);
+            printf("L%d:\n", shortCircuitLabel);
+
+            // Second condition generation
+            printThreeAddressCode(tree->left->right, indentLevel);
+
+            char *tempVar2 = (char*)malloc(10*sizeof(char));
+            sprintf(tempVar2, "t%d", tempVarCounter++);
+            tree->left->right->tac = tempVar2;
+
+            indent(indentLevel);
+            printf("%s = %s %s %s\n", tempVar2, tree->left->right->left->tac, tree->left->right->token, tree->left->right->right->tac);
+
+            // Right condition test and jump
+            indent(indentLevel);
+            printf("if %s goto L%d\n", tempVar2, trueLabel);
+
+            // Label to skip the if body if both conditions are false
+            falseLabel = labelCounter++;
+            indent(indentLevel);
+            printf("goto L%d\n", falseLabel);
+        } else {
+            // Three address code for 'if' condition for non logical operations
+            printThreeAddressCode(tree->left, indentLevel);
+
+            char *tempVar = (char*)malloc(10*sizeof(char));
+            sprintf(tempVar, "t%d", tempVarCounter++);
+            tree->left->tac = tempVar;
+
+            indent(indentLevel);
+            printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+
+            // If condition test and jump
+            indent(indentLevel);
+            printf("if %s goto L%d\n", tempVar, trueLabel);
+
+            // Label to skip the if body if condition is false
+            falseLabel = labelCounter++;
+            indent(indentLevel);
+            printf("goto L%d\n", falseLabel);
+        }
 
         // Three address code for 'if' body
-        indent(indentLevel-1);
-        printf("\033[0;31mL%d:\033[0m ", trueLabel); // Print the label first
-        printThreeAddressCode(tree->right, indentLevel-1); // Then print the first statement of the if body on the same line
+        indent(indentLevel - 1);
+        printf("L%d:\n", trueLabel);
+        printThreeAddressCode(tree->right, indentLevel);
+
+        // Label for the rest of the code after the 'if' body
+        indent(indentLevel - 1);
+        printf("L%d:\n", falseLabel);
     }
    else if (strcmp(tree->token, "if_else") == 0) {
         // Three address code for 'if' condition
@@ -1542,6 +1626,7 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         char *tempVar = (char*)malloc(10*sizeof(char));
         sprintf(tempVar, "t%d", tempVarCounter++);
         tree->left->tac = tempVar;
+
         indent(indentLevel);
         printf("%s = %s %s %s\n", tree->left->tac, tree->left->left->tac, tree->left->token, tree->left->right->tac);
 
@@ -1555,19 +1640,19 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         printf("goto L%d\n", falseLabel); // Jump to 'else' block immediately if condition is not true
 
         // Three address code for 'if' body
-        indent(indentLevel-1);
-        printf("L%d: ", trueLabel); // print label for 'if' body
-        printThreeAddressCode(tree->right->left, indentLevel-1);
+        indent(indentLevel - 1);
+        printf("L%d: \n", trueLabel); // print label for 'if' body
+        printThreeAddressCode(tree->right->left, indentLevel);
         indent(indentLevel);
         printf("goto L%d\n", endLabel); // Jump to end after executing 'if' body
 
         // Three address code for 'else' body
-        indent(indentLevel-1);
-        printf("L%d: ", falseLabel); // print label for 'else' body
-        printThreeAddressCode(tree->right->right, indentLevel-1);
+        indent(indentLevel - 1);
+        printf("L%d: \n", falseLabel); // print label for 'else' body
+        printThreeAddressCode(tree->right->right, indentLevel);
 
         // Print end label
-        indent(indentLevel-1);
+        indent(indentLevel - 1);
         printf("L%d:\n", endLabel); // print label for end of 'if_else' structure
     }
     else {
@@ -1642,6 +1727,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    // ! WILL PRINT 3AC ONCE ACTIVATED.
     printThreeAddressCode(root, 0);
 
     fclose(inputFile);
