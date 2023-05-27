@@ -354,7 +354,7 @@
 
     int isUnaryOperator(const char* token) {
         // Currently only support address-of operator
-        return strcmp(token, "&") == 0 || strcmp(token, "*") == 0 || strcmp(token, "ARRAY_ELEMENT") == 0;
+        return strcmp(token, "&") == 0 || strcmp(token, "*") == 0 || strcmp(token, "ARRAY_ELEMENT") == 0 || strcmp(token, "abs") == 0;
     }
 
     char* getNodeType(node *n);
@@ -458,9 +458,9 @@
             yyerror(errorMessage);
             return NULL;
         }
-        if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "int") == 0 || strcmp(entry->type, "real") == 0)) {
+        if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "string") == 0)) {
             char errorMessage[150];
-            sprintf(errorMessage, "Error: Invalid type for operation 'abs'. Operand must be of type int or real, but got %s\n", entry->type);
+            sprintf(errorMessage, "Error: Invalid type for operation 'abs'. Operand must be of type string, but got %s\n", entry->type);
             yyerror(errorMessage);
             return NULL;
         }
@@ -502,11 +502,12 @@
 
     char* getNodeType(node *n) {
         if (n == NULL) {
-            yyerror("Null node in getNodeType");
+            yyerror("Error: Null node encountered when trying to get node type");
             return NULL;
         }
         if (n->left == NULL && n->right == NULL) { // Identifier or literal
             if (isOperator(n->token)) {
+                yyerror("Error: Unexpected operator '%s' encountered when a variable or literal was expected", n->token);
                 return NULL; // Operators don't have a type in the same sense as variables or literals
             }
             if (isNumericLiteral(n->token)) {
@@ -526,21 +527,24 @@
             }
             symbol_table_entry* entry = lookupSymbolTable(n->token);
             if (entry == NULL) {
-                yyerror("Undeclared identifier: %s", n->token);
+                yyerror("Error: Identifier '%s' not declared in the current scope", n->token);
                 return NULL;
             }
             return entry->type;
         }
         else if (n->right == NULL) { // Unary operation
             if (!isUnaryOperator(n->token)) {
-                yyerror("Unexpected operator in unary operation");
+                yyerror("Error: Operator '%s' not applicable in unary operation", n->token);
                 return NULL;
+            }
+            if (strcmp(n->token, "abs") == 0) {
+                return "int";
             }
             return checkUnaryOperationType(n->left, n->token);
         }
         else { // Binary operation
             if (n->left == NULL || n->right == NULL) {
-                yyerror("Missing operand in binary operation");
+                yyerror("Error: Binary operation '%s' missing an operand", n->token);
                 return NULL;
             }
             char* leftType = getNodeType(n->left);
@@ -553,7 +557,7 @@
             // Check the type compatibility of operands with the operation
             return checkBinaryOperationType(n->left, n->right, n->token);
         }
-
+        yyerror("Error: Node '%s' represents an operation but it's missing type at this level", n->token);
         return NULL; // For nodes representing operations, there is no type at this level.
     }
 
@@ -764,7 +768,9 @@ subroutine:
             /* Check if a function with the same name is already declared in the current scope */
             symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
             if (existingEntry != NULL) {
-                yyerror("Error: Function with this name is already declared in the current scope");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' is already declared in the current scope", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -808,7 +814,9 @@ subroutine:
             /* Check if a function with the same name is already declared in the current scope */
             symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
             if (existingEntry != NULL) {
-                yyerror("Error: Function with this name is already declared in the current scope");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' is already declared in the current scope", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -839,7 +847,9 @@ subroutine:
             /* Retrieve the function's entry from the symbol table */
             symbol_table_entry *functionEntry = lookupSymbolTable(peek(*functionsStack));
             if (functionEntry == NULL) {
-                yyerror("Error: Function not found in the symbol table");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' not found in the symbol table", peek(*functionsStack));
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -847,7 +857,9 @@ subroutine:
             char *functionReturnType = getFunctionReturnType(peek(*functionsStack));
 
             if(strcmp(functionReturnType, "void") != 0 && functionEntry->hasReturnStatement == 0) {
-                yyerror("Error: Function must have a return statement");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' must have a return statement", peek(*functionsStack));
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -959,7 +971,9 @@ statement:
                 char *type = malloc(strlen($4) + 2);
                 strcat(type, $4);
                 if (addSymbolTableEntry(id_node->token, type) == -1) {
-                    yyerror("Variable redeclaration or memory allocation error");
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Variable '%s' redeclaration or memory allocation error.", id_node->token);
+                    yyerror(errorMessage);
                     YYABORT;
                 }
                 id_node = id_node->left;
@@ -974,7 +988,9 @@ statement:
             node* id_node = $2;
             while(id_node != NULL) {
                 if (addSymbolTableEntry(id_node->token, $4->token) == -1) {
-                    yyerror("Variable redeclaration or memory allocation error");
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Variable '%s' redeclaration or memory allocation error.", id_node->token);
+                    yyerror(errorMessage);
                     YYABORT;
                 }
                 id_node = id_node->right;
@@ -985,18 +1001,28 @@ statement:
             // Check if variable has been declared
             symbol_table_entry* entry = lookupSymbolTable($1);
             if (entry == NULL) {
-                yyerror("Variable not defined");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' not defined.", $1);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
-            // /* Get the return type of the function call */
-            // char* returnType = getReturnTypeOfFunctionCall($3);
+            // Retrieve the function's return type
+            char* functionReturnType = getFunctionReturnType($3->left->token);
+            if (functionReturnType == NULL) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Failed to retrieve return type for function '%s'.", $3->left->token);
+                yyerror(errorMessage);
+                YYABORT;
+            }
 
-            // /* Compare the expected return type with the actual return type */
-            // if (strcmp(entry->type, returnType) != 0) {
-            //     yyerror("Type mismatch in assignment. Expected: %s, Found: %s", entry->type, returnType);
-            //     YYABORT;
-            // }
+            // Check if the return type of the function matches the type of the identifier
+            if (strcmp(entry->type, functionReturnType) != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, functionReturnType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
 
             $$ = createNode("=", createNode($1, NULL, NULL), $3);
         }
@@ -1006,7 +1032,9 @@ statement:
             // Check if variable has been declared
             symbol_table_entry* entry = lookupSymbolTable($1);
             if (entry == NULL) {
-                yyerror("Variable not defined");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' not defined.", $1);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1017,7 +1045,9 @@ statement:
                 YYABORT;
             }
             if (strcmp(entry->type, expression_type) != 0) {
-                yyerror("Type mismatch in assignment. Expected: %s, Found: %s", entry->type, expression_type);
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, expression_type);
+                yyerror(errorMessage);
                 YYABORT;
             }
         }
@@ -1026,11 +1056,15 @@ statement:
             // Check if variable has been declared
             symbol_table_entry* entry = lookupSymbolTable($2);
             if (entry == NULL) {
-                yyerror("Variable not defined");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' not defined.", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
             if (entry->type[strlen(entry->type) - 1] != '*') {
-                yyerror("Variable is not a pointer");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' is not a pointer.", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1046,7 +1080,9 @@ statement:
                 YYABORT;
             }
             if (strcmp(pointed_type, expression_type) != 0) {
-                yyerror("Type mismatch in assignment. Expected: %s, Found: %s", pointed_type, expression_type);
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Type mismatch in assignment to pointer variable '%s'. Expected: '%s', Found: '%s'.", $2, pointed_type, expression_type);
+                yyerror(errorMessage);
                 free(pointed_type);
                 YYABORT;
             }
@@ -1061,14 +1097,19 @@ statement:
                 yyerror("Error: Symbol table is not initialized\n");
                 YYABORT;
             }
+
             if ($1 == NULL || $2 == NULL) {
-                yyerror("Error: Null values provided\n");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Null values provided for declaration.");
+                yyerror(errorMessage);
                 YYABORT;
             }
 
             symbol_table_entry* entry = lookupSymbolTableInCurrentScope($2);
             if (entry != NULL) {
-                yyerror("Error: Variable %s already declared\n", $2);
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' already declared in current scope.", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1084,7 +1125,9 @@ statement:
             /* Retrieve the function's entry from the symbol table */
             symbol_table_entry *functionEntry = lookupSymbolTable(peek(*functionsStack));
             if (functionEntry == NULL) {
-                yyerror("Error: Function not found in the symbol table");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' not found in the symbol table.", peek(*functionsStack));
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1107,7 +1150,9 @@ statement:
 
             /* Compare the expected return type with the actual return type */
             if (strcmp(expectedReturnType, actualReturnType) != 0) {
-                yyerror("Error: Type mismatch in return statement");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Type mismatch in return statement for function '%s'. Expected '%s' but found '%s'.", currentFunction, expectedReturnType, actualReturnType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1139,7 +1184,9 @@ function_call:
                 YYABORT;
             }
             if (countArguments(existingEntry) != 0) {
-                yyerror("Error: Wrong number of arguments in function call");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Wrong number of arguments in function call for '%s'. Expected 0 but found %d.", $1, countArguments(existingEntry));
+                yyerror(errorMessage);
                 YYABORT;
             }
             $$ = createNode("call", createNode($1, NULL, NULL), NULL);
@@ -1153,7 +1200,9 @@ function_call:
             }
             int numCallArgs = countNodes($3);
             if (countArguments(existingEntry) != numCallArgs) {
-                yyerror("Error: Wrong number of arguments in function call");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Wrong number of arguments in function call for '%s'. Expected %d but got %d.", $1, countArguments(existingEntry), numCallArgs);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1164,7 +1213,9 @@ function_call:
 
             while (argument != NULL && callArgument != NULL) {
                 if (strcmp(argument->type, getTypeOfExpression(callArgument->left)) != 0) {
-                    yyerror("Error: Argument type mismatch in function call");
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Argument type mismatch in function call for '%s'. Expected type '%s' but got '%s'.", $1, argument->type, getTypeOfExpression(callArgument->left));
+                    yyerror(errorMessage);
                     YYABORT;
                 }
                 argument = argument->next;
@@ -1210,7 +1261,9 @@ if_statement:
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of an if statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1235,7 +1288,9 @@ if_statement:
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of an if statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1258,7 +1313,9 @@ while_statement:
             char *expressionType = getTypeOfExpression($3);
 
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of a while statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1281,7 +1338,9 @@ do_while_statement:
             char *expressionType = getTypeOfExpression($7);
 
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of a do-while statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a do-while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1303,7 +1362,9 @@ for_statement:
             char *expressionType = getTypeOfExpression($5);
 
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of a for statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a for statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1420,11 +1481,15 @@ unary:
     | PIPE expression PIPE {
         char* exprType = getTypeOfExpression($2);
         if (exprType == NULL) {
-            yyerror("Expression type error for 'abs' operation");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid expression type for 'abs' operation.\n");
+            yyerror(errorMessage);
             YYABORT;
         }
-        if(strcmp(exprType, "int") != 0 && strcmp(exprType, "real") != 0) {
-            yyerror("Invalid type for 'abs' operation. Operand must be of type int or real");
+        if(strcmp(exprType, "string") != 0) {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid type for 'abs' operation. Operand must be of type string, but got %s.\n", exprType);
+            yyerror(errorMessage);
             YYABORT;
         }
         $$ = createNode("abs", $2, NULL);
@@ -1433,21 +1498,26 @@ unary:
         // Check if variable has been declared
         symbol_table_entry* entry = lookupSymbolTable($2);
         if (entry == NULL) {
-            yyerror("Variable not defined");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Undefined variable: '%s'.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
         if (entry->type[strlen(entry->type) - 1] != '*') {
-            yyerror("Variable is not a pointer");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid operation on '%s'. It is not a pointer type.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
-
         $$ = createNode("*", createNode($2, NULL, NULL), NULL);
     }
     | MULTI LPAREN expression RPAREN {
         // Check if the expression is of a pointer type
         char* exprType = getTypeOfExpression($3);
         if (exprType == NULL || exprType[strlen(exprType) - 1] != '*') {
-            yyerror("Expression is not of pointer type for dereferencing operation");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid type for dereferencing operation. Operand must be of pointer type, but got %s.\n", exprType);
+            yyerror(errorMessage);
             YYABORT;
         }
         $$ = createNode("*", $3, NULL);
@@ -1498,11 +1568,15 @@ atom:
     | ADDRESS IDENTIFIER LBRACKET expression RBRACKET {
         symbol_table_entry* entry = lookupSymbolTable($2);
         if (entry == NULL) {
-            yyerror("Undeclared identifier: %s", $2);
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Undeclared identifier: '%s'.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
         if (strcmp(entry->type, "string") != 0) {
-            yyerror("Variable is not a string array");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid operation on '%s'. It is not a string array.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
         $$ = createNode("ARRAY_ELEMENT", createNode($2, NULL, NULL), $4);
