@@ -466,7 +466,6 @@
             if (isOperator(n->token)) {
                 return NULL; // Operators don't have a type in the same sense as variables or literals
             }
-            printf("\nHIT %s\n", n->token);
             if (isNumericLiteral(n->token)) {
                 return "int";
             }
@@ -624,7 +623,7 @@
 
 
 %token <string> DIVISION PLUS MINUS MULTI IDENTIFIER
-%token <string> AND OR EQUALS
+%token <string> AND OR EQUALS INCREMENT
 %token <string> INT_LITERAL CHAR_LITERAL STRING_LITERAL BOOL_LITERAL REAL_LITERAL
 %token <string> BOOL CHAR INT REAL STRING VOID
 %token <string> VAR ASSIGNMENT SEMICOLON COLON ARROW COMMA PIPE LBRACKET RBRACKET
@@ -646,6 +645,7 @@
 %left LT GT LTE GTE
 %left PLUS MINUS
 %left MULTI DIVISION
+%right ASSIGNMENT
 
 %nonassoc NOT
 
@@ -968,8 +968,6 @@ statement:
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
         {
-            printf("\nHIT %s\n", currentFunction);
-
             /* Retrieve the function's entry from the symbol table */
             symbol_table_entry *functionEntry = lookupSymbolTable(currentFunction);
             if (functionEntry == NULL) {
@@ -1192,11 +1190,25 @@ for_statement:
             node* increment = $7;
             node* body = $10;
 
-            $$ = createNode("for", initialization, createNode("for_body", condition, createNode("for_increment", increment, body)));
+            /* Build the nodes in stages */
+            node* initialization_node = createNode("for_initialization", initialization, NULL);
+            node* condition_node = createNode("for_condition", condition, NULL);
+            node* increment_node = createNode("for_increment", increment, NULL);
+            node* body_node = createNode("for_body", body, NULL);
+
+            /* Combine the four nodes into one */
+            $$ = createNode("for_statement",
+                            createNode("for_header",
+                                       initialization_node,
+                                       createNode("for_conditions",
+                                                  condition_node,
+                                                  increment_node)),
+                            body_node);
 
             popSymbolTable(); /* Pop the symbol table after exiting for loop scope */
         }
     ;
+
 
 expression:
     /* Logical and relational operations */
@@ -1239,6 +1251,19 @@ expression:
         if(checkBinaryOperationType($1, $3, ">=") == NULL)
             YYABORT;
         $$ = createNode(">=", $1, $3);
+    }
+    | IDENTIFIER ASSIGNMENT expression {
+        symbol_table_entry* entry = lookupSymbolTable($1);
+        if (entry == NULL) {
+            yyerror("Undeclared identifier: %s", $1);
+            YYABORT;
+        }
+        char* exprType = getTypeOfExpression($3);
+        if(strcmp(exprType, entry->type) != 0) {
+            yyerror("Type mismatch in assignment");
+            YYABORT;
+        }
+        $$ = createNode("=", createNode($1, NULL, NULL), $3);
     }
     | term
     ;
@@ -1315,6 +1340,19 @@ unary:
             YYABORT;
         }
         $$ = createNode("*", $3, NULL);
+    }
+    | IDENTIFIER INCREMENT {
+        symbol_table_entry* entry = lookupSymbolTable($1);
+        if (entry == NULL) {
+            yyerror("Undeclared identifier: %s", $1);
+            YYABORT;
+        }
+        if(strcmp(entry->type, "int") != 0) {
+            yyerror("Increment operation only applicable to integer type");
+            YYABORT;
+        }
+        node* identifier_node = createNode("identifier", createNode($1, NULL, NULL), NULL);
+        $$ = createNode("post_inc", identifier_node, createNode("increment", NULL, NULL));
     }
     | atom
     ;
@@ -1492,8 +1530,27 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         // Print the function name
         indent(indentLevel);
         printf("\033[0;31m%s:\033[0m\n", tree->left->token);
-
+        indent(indentLevel);
         printf("\tBeginFunc\n");
+
+        // Fetch the function arguments node
+        node *functionNode = tree->left;
+        node *argsNode = NULL;
+
+        if(functionNode != NULL){
+            argsNode = functionNode->left; // Fetch the 'arguments' node
+        }
+        // TAC generation for each function argument
+        if(argsNode != NULL && strcmp(argsNode->token, "arguments") == 0) {
+            node *argumentNode = argsNode->left;
+            while(argumentNode != NULL) {
+                if (strcmp(argumentNode->token, "argument") == 0) {
+                    indent(indentLevel + 2);
+                    printf("Param %s\n", argumentNode->left->right->token);
+                }
+                argumentNode = argumentNode->right;
+            }
+        }
 
         // Traverse to the body node
         node *bodyNode = tree->right;
@@ -1502,12 +1559,12 @@ void printThreeAddressCode(node *tree, int indentLevel) {
             node *statementsNode = bodyNode->left;
             if(statementsNode != NULL) {
                 // Generate TAC for all statements in the body
-                printThreeAddressCode(statementsNode, indentLevel + 1);
+                printThreeAddressCode(statementsNode, indentLevel + 2);
             }
         }
-
         printf("\tEndFunc\n");
     }
+
     else if (strcmp(tree->token, "return") == 0) {
         printThreeAddressCode(tree->left, indentLevel);
         indent(indentLevel - 1);
@@ -1595,6 +1652,86 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         // print end label
         indent(indentLevel - 1);
         printf("L%d:\n", endLabel + 1);
+    }
+    else if (strcmp(tree->token, "do_while") == 0) {
+        int startLabel = labelCounter++;
+        int endLabel = labelCounter++;
+
+        // Print the start label
+        indent(indentLevel - 1);
+        printf("L%d:\n", startLabel);
+
+        // Generate TAC for the loop body
+        printThreeAddressCode(tree->left, indentLevel);
+
+        // Generate TAC for the condition
+        printThreeAddressCode(tree->right, indentLevel);
+
+        char *tempVar = (char*)malloc(10*sizeof(char));
+        sprintf(tempVar, "t%d", tempVarCounter++);
+        tree->right->tac = tempVar;
+
+        // Condition test and jump
+        indent(indentLevel);
+        printf("%s = %s %s %s\n", tempVar, tree->right->left->tac, tree->right->token, tree->right->right->tac);
+        indent(indentLevel);
+        printf("if %s goto L%d\n", tempVar, startLabel);
+
+        // Print the end label
+        indent(indentLevel - 1);
+        printf("L%d:\n", endLabel);
+    }
+    else if (strcmp(tree->token, "for_statement") == 0) {
+        int startLabel = labelCounter++;
+        int conditionLabel = labelCounter++;
+        int bodyLabel = labelCounter++;
+        int endLabel = labelCounter++;
+
+        // Generate TAC for initialization
+        indent(indentLevel - 2);
+        printThreeAddressCode(tree->left->left->left, indentLevel);
+
+        // Jump to condition check
+        indent(indentLevel);
+        printf("goto L%d\n", conditionLabel);
+
+        // Print the body label
+        indent(indentLevel - 1);
+        printf("L%d: \n", bodyLabel);
+
+        // Generate TAC for loop body
+        printThreeAddressCode(tree->right, indentLevel);
+
+        // After executing loop body, jump back to condition check
+        indent(indentLevel);
+        printf("goto L%d\n", conditionLabel);
+
+        // Print the condition label
+        indent(indentLevel - 1);
+        printf("L%d: \n", conditionLabel);
+
+        // Generate TAC for condition
+        printThreeAddressCode(tree->left->right->left->left, indentLevel);
+
+        char *tempVar = (char*)malloc(10*sizeof(char));
+        sprintf(tempVar, "t%d", tempVarCounter++);
+        tree->left->right->left->left->tac = tempVar;
+
+        // Condition test and jump
+        indent(indentLevel);
+        printf("%s = %s %s %s\n", tempVar, tree->left->right->left->left->left->tac, tree->left->right->left->left->token, tree->left->right->left->left->right->tac);
+
+        // If condition is true, execute loop body
+        indent(indentLevel);
+        printf("if %s goto L%d\n", tempVar, bodyLabel);
+
+        // If condition is false, jump to end of loop
+        indent(indentLevel);
+        printf("goto L%d\n", endLabel);
+
+        // Print the end label
+        indent(indentLevel - 1);
+        printf("L%d: \n", endLabel);
     }
     else if (strcmp(tree->token, "if") == 0) {
         int shortCircuitLabel, trueLabel, falseLabel;
@@ -1784,9 +1921,6 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         }
     }
 }
-
-
-
 
 int yyerror(const char *fmt, ...)
 {

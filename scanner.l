@@ -53,6 +53,7 @@
 "!="        { return NEQ;}
 "||"        { return OR;}
 "+"         { return PLUS;}
+"++"         { return INCREMENT;}
 "*"         { return MULTI;}
 "&"         { return ADDRESS; }
 
