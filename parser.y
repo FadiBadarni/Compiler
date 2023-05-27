@@ -728,7 +728,7 @@
 
 %type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
-%type <node> program return_type
+%type <node> program return_type relational
 %type <node> code_block if_statement while_statement do_while_statement for_statement factor term unary atom
 
 %left OR
@@ -1188,7 +1188,7 @@ code_block:
         // This will hold all variables declared in the new scope
         pushSymbolTable(createSymbolTable());
     }
-    statements_list // Here's where your variable declarations would be
+    statements_list // variable declarations
     RBRACE // End of code block
     {
         // Create a block node and associate it with the statements within the block
@@ -1329,61 +1329,52 @@ for_statement:
         }
     ;
 
-
 expression:
-    /* Logical and relational operations */
-    expression AND term {
+    /* Logical operations */
+    expression AND relational {
         if(checkBinaryOperationType($1, $3, "&&") == NULL)
             YYABORT;
         $$ = createNode("&&", $1, $3);
     }
-    | expression OR term {
+    | expression OR relational {
         if(checkBinaryOperationType($1, $3, "||") == NULL)
             YYABORT;
         $$ = createNode("||", $1, $3);
     }
-    | expression EQUALS term {
+    | relational
+    ;
+
+relational:
+    /* Relational operations */
+    relational EQUALS term {
         if(checkBinaryOperationType($1, $3, "==") == NULL)
             YYABORT;
         $$ = createNode("==", $1, $3);
     }
-    | expression NEQ term {
+    | relational NEQ term {
         if(checkBinaryOperationType($1, $3, "!=") == NULL)
             YYABORT;
         $$ = createNode("!=", $1, $3);
     }
-    | expression LT term {
+    | relational LT term {
         if(checkBinaryOperationType($1, $3, "<") == NULL)
             YYABORT;
         $$ = createNode("<", $1, $3);
     }
-    | expression GT term {
+    | relational GT term {
         if(checkBinaryOperationType($1, $3, ">") == NULL)
             YYABORT;
         $$ = createNode(">", $1, $3);
     }
-    | expression LTE term {
+    | relational LTE term {
         if(checkBinaryOperationType($1, $3, "<=") == NULL)
             YYABORT;
         $$ = createNode("<=", $1, $3);
     }
-    | expression GTE term {
+    | relational GTE term {
         if(checkBinaryOperationType($1, $3, ">=") == NULL)
             YYABORT;
         $$ = createNode(">=", $1, $3);
-    }
-    | IDENTIFIER ASSIGNMENT expression {
-        symbol_table_entry* entry = lookupSymbolTable($1);
-        if (entry == NULL) {
-            yyerror("Undeclared identifier: %s", $1);
-            YYABORT;
-        }
-        char* exprType = getTypeOfExpression($3);
-        if(strcmp(exprType, entry->type) != 0) {
-            yyerror("Type mismatch in assignment");
-            YYABORT;
-        }
-        $$ = createNode("=", createNode($1, NULL, NULL), $3);
     }
     | term
     ;
