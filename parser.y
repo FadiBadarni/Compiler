@@ -316,6 +316,15 @@
         return 0;
     }
 
+    int isRealLiteral(const char* str) {
+        char* endptr;
+        strtod(str, &endptr);
+
+        // If the endptr points to the end of the string, and the string is not empty,
+        // then the entire string was successfully converted to a double.
+        return *endptr == '\0' && str != endptr && *str != '\0';
+    }
+
     int isUnaryOperator(const char* token) {
         // Currently only support address-of operator
         return strcmp(token, "&") == 0 || strcmp(token, "*") == 0 || strcmp(token, "ARRAY_ELEMENT") == 0;
@@ -457,6 +466,7 @@
             if (isOperator(n->token)) {
                 return NULL; // Operators don't have a type in the same sense as variables or literals
             }
+            printf("\nHIT %s\n", n->token);
             if (isNumericLiteral(n->token)) {
                 return "int";
             }
@@ -468,6 +478,9 @@
             }
             if (isStringLiteral(n->token)) {
                 return "string";
+            }
+            if (isRealLiteral(n->token)) {
+                return "real";
             }
             symbol_table_entry* entry = lookupSymbolTable(n->token);
             if (entry == NULL) {
@@ -1509,6 +1522,46 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         indent(indentLevel + 1);
         printf("EndProc\n");
     }
+    else if (strcmp(tree->token, "call") == 0) {
+        // The functionNode's left is the function name and right is the 'arguments' node
+        node *functionNode = tree->left;
+        node *argsNode = NULL;
+
+        if(functionNode != NULL){
+            argsNode = functionNode->left; // Fetch the 'arguments' node
+        }
+
+        int argsCount = 0;  // Count number of arguments for later use
+
+        // TAC generation for each argument and push operation
+        if(argsNode != NULL && strcmp(argsNode->token, "arguments") == 0) {
+            node *argumentNode = argsNode->left;
+            while(argumentNode != NULL) {
+                if (strcmp(argumentNode->token, "argument") == 0) {
+                    printThreeAddressCode(argumentNode->left, indentLevel);
+                    indent(indentLevel);
+                    printf("PushParam %s\n", argumentNode->left->tac);
+                    argsCount++;
+                }
+                argumentNode = argumentNode->right;
+            }
+        }
+
+        // Create a new temporary variable for the return value of the function
+        char *tempVar = (char*)malloc(10*sizeof(char));
+        sprintf(tempVar, "t%d", tempVarCounter++);
+        tree->tac = tempVar;
+
+        // Print the function call
+        indent(indentLevel);
+        printf("%s = call %s\n", tempVar, functionNode->token);
+
+        // Print pop operations after function call
+        for (int i = 0; i < argsCount; i++) {
+            indent(indentLevel);
+            printf("PopParam\n");
+        }
+    }
     else if (strcmp(tree->token, "while") == 0) {
         // Three address code for 'while' condition
         printThreeAddressCode(tree->left, indentLevel);
@@ -1620,35 +1673,85 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         printf("L%d:\n", falseLabel);
     }
    else if (strcmp(tree->token, "if_else") == 0) {
-        // Three address code for 'if' condition
-        printThreeAddressCode(tree->left, indentLevel);
+        int shortCircuitLabel, trueLabel, falseLabel, endLabel;
+        trueLabel = labelCounter++;
 
-        char *tempVar = (char*)malloc(10*sizeof(char));
-        sprintf(tempVar, "t%d", tempVarCounter++);
-        tree->left->tac = tempVar;
+        if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
+            printThreeAddressCode(tree->left->left, indentLevel);
 
-        indent(indentLevel);
-        printf("%s = %s %s %s\n", tree->left->tac, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+            char *tempVar1 = (char*)malloc(10*sizeof(char));
+            sprintf(tempVar1, "t%d", tempVarCounter++);
+            tree->left->left->tac = tempVar1;
 
-        int trueLabel = labelCounter++; // jump here if condition is true
-        int falseLabel = labelCounter++; // jump here if condition is false
-        int endLabel = labelCounter++; // jump here after executing either 'if' or 'else' block
+            indent(indentLevel);
+            printf("%s = %s %s %s\n", tempVar1, tree->left->left->left->tac, tree->left->left->token, tree->left->left->right->tac);
 
-        indent(indentLevel);
-        printf("if %s goto L%d\n", tree->left->tac, trueLabel); // Jump to 'if' block if condition is true
-        indent(indentLevel);
-        printf("goto L%d\n", falseLabel); // Jump to 'else' block immediately if condition is not true
+            // Left condition test and jump
+            indent(indentLevel);
+            printf("if %s goto L%d\n", tempVar1, trueLabel);
+
+            // If the first condition is false, we go to the second condition
+            shortCircuitLabel = labelCounter++;
+
+            indent(indentLevel);
+            printf("goto L%d\n", shortCircuitLabel);
+
+            // Print label for the second condition
+            indent(indentLevel - 1);
+            printf("L%d:\n", shortCircuitLabel);
+
+            // Second condition generation
+            printThreeAddressCode(tree->left->right, indentLevel);
+
+            char *tempVar2 = (char*)malloc(10*sizeof(char));
+            sprintf(tempVar2, "t%d", tempVarCounter++);
+            tree->left->right->tac = tempVar2;
+
+            indent(indentLevel);
+            printf("%s = %s %s %s\n", tempVar2, tree->left->right->left->tac, tree->left->right->token, tree->left->right->right->tac);
+
+            // Right condition test and jump
+            indent(indentLevel);
+            printf("if %s goto L%d\n", tempVar2, trueLabel);
+
+            // Label to skip the if body if both conditions are false
+            falseLabel = labelCounter++;
+            indent(indentLevel);
+            printf("goto L%d\n", falseLabel);
+        } else {
+            // Three address code for 'if' condition for non logical operations
+            printThreeAddressCode(tree->left, indentLevel);
+
+            char *tempVar = (char*)malloc(10*sizeof(char));
+            sprintf(tempVar, "t%d", tempVarCounter++);
+            tree->left->tac = tempVar;
+
+            indent(indentLevel);
+            printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+
+            // If condition test and jump
+            indent(indentLevel);
+            printf("if %s goto L%d\n", tempVar, trueLabel);
+
+            // Label to skip the if body if condition is false
+            falseLabel = labelCounter++;
+            indent(indentLevel);
+            printf("goto L%d\n", falseLabel);
+        }
 
         // Three address code for 'if' body
         indent(indentLevel - 1);
-        printf("L%d: \n", trueLabel); // print label for 'if' body
+        printf("L%d:\n", trueLabel);
         printThreeAddressCode(tree->right->left, indentLevel);
-        indent(indentLevel);
-        printf("goto L%d\n", endLabel); // Jump to end after executing 'if' body
 
-        // Three address code for 'else' body
+        // Label for the end of the 'if' block
+        endLabel = labelCounter++;
+        indent(indentLevel);
+        printf("goto L%d\n", endLabel);
+
+        // Label and three address code for 'else' body
         indent(indentLevel - 1);
-        printf("L%d: \n", falseLabel); // print label for 'else' body
+        printf("L%d:\n", falseLabel);
         printThreeAddressCode(tree->right->right, indentLevel);
 
         // Print end label
