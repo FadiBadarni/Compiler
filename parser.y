@@ -537,13 +537,12 @@
                     yyerror("Type mismatch in binary operation: %s %s", leftType, rightType);
                     return NULL;
                 }
-
                 // The type of the operation is dependent on the operator
                 if (strcmp(expr->token, "<") == 0 || strcmp(expr->token, ">") == 0 ||
-                    strcmp(expr->token, "==") == 0 || strcmp(expr->token, "!=") == 0) {
+                    strcmp(expr->token, "==") == 0 || strcmp(expr->token, "!=") == 0 ||
+                    strcmp(expr->token, ">=") == 0 || strcmp(expr->token, "<=") == 0) {
                     return "bool";
                 }
-
                 return leftType; // for arithmetic operations, the type of the operation is the same as the operands
             }
         }
@@ -1480,8 +1479,42 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         indent(indentLevel);
         printf("\tBeginProc\n");
         printThreeAddressCode(tree->right, indentLevel + 2);
+        indent(indentLevel + 1);
+        printf("EndProc\n");
+    }
+    else if (strcmp(tree->token, "while") == 0) {
+        // Three address code for 'while' condition
+        printThreeAddressCode(tree->left, indentLevel);
+
+        char *tempVar = (char*)malloc(10*sizeof(char));
+        sprintf(tempVar, "t%d", tempVarCounter++);
+        tree->left->tac = tempVar;
+        int beginLabel = labelCounter++; // label before condition check
+        int endLabel = labelCounter++; // label after the loop body
+
+        // print the beginning label
+        indent(indentLevel-1);
+        printf("L%d: \n", beginLabel);
+
+        // print the condition
+        indent(indentLevel);
+        printf("%s = %s %s %s\n", tree->left->tac, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+
+        indent(indentLevel);
+        printf("if %s goto L%d\n", tree->left->tac, beginLabel + 1); // Jump to 'while' body if condition is true
+        indent(indentLevel);
+        printf("goto L%d\n", endLabel + 1); // Jump to end of while loop if condition is false
+
+        // Three address code for 'while' body
         indent(indentLevel - 1);
-        printf("\t\033[0;31mL%d:\033[0m EndProc\n", labelCounter++);
+        printf("L%d: \n", beginLabel + 1);
+        printThreeAddressCode(tree->right, indentLevel);
+        indent(indentLevel);
+        printf("goto L%d\n", beginLabel); // jump back to condition check after executing loop body
+
+        // print end label
+        indent(indentLevel - 1);
+        printf("L%d:\n", endLabel + 1);
     }
     else if (strcmp(tree->token, "if") == 0) {
         // Three address code for 'if' condition
