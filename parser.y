@@ -52,6 +52,7 @@
     int yyerror(const char *fmt, ...);
     symbol_table *current_table = NULL; // this points to the top of the stack
     function_stack_node** functionsStack = NULL;
+    function_stack_node** temporaryStack = NULL;
     char* peek(function_stack_node* stack);
 
     int labelCounter = 0;  // For generating unique labels
@@ -288,10 +289,6 @@
         return count;
     }
 
-    /*
-    Tree structure needs fixing for generating arguments. this function works in the
-    messed up structure, nesting is causing the problem.
-    */
     int countNodes(node *n) {
         int count = 0;
         while (n != NULL) {
@@ -307,7 +304,7 @@
     }
 
     int isNumericLiteral(const char* str) {
-        // iterate over the string
+        // Loop over each character in the string.
         for(int i = 0; str[i] != '\0'; i++) {
             // if a character is not a digit, return false
             if (!isdigit(str[i])) {
@@ -320,7 +317,6 @@
     }
 
     int isCharLiteral(const char* str) {
-        // a char literal is usually enclosed in single quotes (like 'a') so we expect the string to be 3 characters long
         // str[0] should be a single quote, str[1] any character and str[2] a single quote again
         if (strlen(str) == 3 && str[0] == '\'' && str[2] == '\'') {
             return 1;
@@ -709,6 +705,37 @@
 
 
 
+    bool isUsedFunction(node* root, char* functionName) {
+        if(root == NULL) {
+            return false;
+        }
+        if (strcmp(root->token, "call") == 0 && strcmp(root->left->token, functionName) == 0) {
+            return true;
+        }
+
+        return isUsedFunction(root->left, functionName) || isUsedFunction(root->right, functionName);
+    }
+
+    bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root) {
+        function_stack_node* stackNode = functionStack;
+        printSymbolTable(current_table);
+        printStack(stackNode);
+        bool isDead = true;
+
+        // Go through each function in the function stack
+        while (stackNode != NULL) {
+            // If a function in the stack is found being called in the AST, it's not dead code
+            if (isUsedFunction(root, stackNode->function_name)) {
+                isDead = false;
+                break;
+            }
+
+            stackNode = stackNode->next;
+        }
+
+        return isDead;
+    }
+
 %}
 
 %union
@@ -751,6 +778,11 @@
 program:
     subroutines main {
         root = createNode("program", $1, $2);
+            if (isDeadCode(current_table, *temporaryStack, root)) {
+                printf("There is dead code in the program.\n");
+            } else {
+                printf("There is no dead code in the program.\n");
+            }
             printTree(root);
     }
     ;
@@ -779,6 +811,7 @@ subroutine:
 
             /* Push the function name onto the functionsStack */
             push(functionsStack, strdup($2));
+            push(temporaryStack, strdup($2));
 
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -888,6 +921,7 @@ main:
 
             /* Push the function name to the stack */
             push(functionsStack, strdup("main"));
+            push(temporaryStack, strdup("main"));
 
             /* When we start the main function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -1708,6 +1742,7 @@ void printTree(node *tree)
     }
 }
 
+
 void printThreeAddressCode(node *tree, int indentLevel) {
     if (tree == NULL) return;
 
@@ -2144,6 +2179,9 @@ int main(int argc, char *argv[])
     functionsStack = malloc(sizeof(function_stack_node *));
     *functionsStack = NULL;
 
+    temporaryStack = malloc(sizeof(function_stack_node *));
+    *temporaryStack = NULL;
+
     yyin = inputFile;
     if (yyparse() != 0) {
         fprintf(stderr, "Error: Parsing failed\n");
@@ -2151,8 +2189,10 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+
+
     // ! WILL PRINT 3AC ON ACTIVATION.
-    /* printThreeAddressCode(root, 0); */
+    printThreeAddressCode(root, 0);
 
     fclose(inputFile);
 
