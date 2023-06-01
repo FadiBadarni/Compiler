@@ -6,6 +6,7 @@
     #include <stdbool.h>
     #include <stdarg.h>
     #include <ctype.h>
+    #define HASH_TABLE_SIZE 509
 
     typedef struct node
     {
@@ -60,6 +61,8 @@
 
     int printlevel=0;
     node *root;
+
+    bool calledFunctions[HASH_TABLE_SIZE] = {false}; // Hashtable of called functions
 
     symbol_table* createSymbolTable()
     {
@@ -703,37 +706,71 @@
         return stack->function_name;
     }
 
-
-
-    bool isUsedFunction(node* root, char* functionName) {
-        if(root == NULL) {
-            return false;
-        }
-        if (strcmp(root->token, "call") == 0 && strcmp(root->left->token, functionName) == 0) {
-            return true;
-        }
-
-        return isUsedFunction(root->left, functionName) || isUsedFunction(root->right, functionName);
+    // djb2 hash function
+    unsigned long hash(char* str)
+    {
+        unsigned long hash = 5381;  // magic number for better distribution
+        int c;
+        while ((c = *str++))
+            hash = ((hash << 5) + hash) + c; // hash * 33 + c
+        return hash % HASH_TABLE_SIZE;
     }
 
+    // Add function to the hashtable
+    void addCalledFunction(char* functionName) {
+        int index = hash(functionName);
+        calledFunctions[index] = true;
+    }
+
+    // Check if the function is in the hashtable
+    bool isFunctionCalled(char* functionName) {
+        int index = hash(functionName);
+        return calledFunctions[index];
+    }
+
+    // Traverse the AST and add all called functions to the hashtable
+    void gatherCalledFunctions(node* root) {
+        if(root == NULL) {
+            return;
+        }
+        if (strcmp(root->token, "call") == 0) {
+            addCalledFunction(root->left->token);
+        }
+
+        gatherCalledFunctions(root->left);
+        gatherCalledFunctions(root->right);
+    }
+
+    // Function to print the hash table
+    void printHashTable() {
+        for (int i = 0; i < HASH_TABLE_SIZE; i++) {
+            if (calledFunctions[i])
+                printf("Index %d: true\n", i);
+        }
+    }
+
+    // Check if there is a function that is defined but not called
     bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root) {
+        bool deadCodeFound = false;
         function_stack_node* stackNode = functionStack;
-        printSymbolTable(current_table);
-        printStack(stackNode);
-        bool isDead = true;
+
+        // Gather all called functions
+        gatherCalledFunctions(root);
+
+        printHashTable();
 
         // Go through each function in the function stack
         while (stackNode != NULL) {
-            // If a function in the stack is found being called in the AST, it's not dead code
-            if (isUsedFunction(root, stackNode->function_name)) {
-                isDead = false;
-                break;
+            // If a function in the stack is not found being called in the AST, it's dead code
+            if (!isFunctionCalled(stackNode->function_name)) {
+                printf("Dead code found: Function '%s' is never called.\n", stackNode->function_name);
+                deadCodeFound = true;
             }
 
             stackNode = stackNode->next;
         }
 
-        return isDead;
+        return deadCodeFound;
     }
 
 %}
@@ -778,9 +815,7 @@
 program:
     subroutines main {
         root = createNode("program", $1, $2);
-            if (isDeadCode(current_table, *temporaryStack, root)) {
-                printf("There is dead code in the program.\n");
-            } else {
+            if (!isDeadCode(current_table, *temporaryStack, root)) {
                 printf("There is no dead code in the program.\n");
             }
             printTree(root);
@@ -858,6 +893,7 @@ subroutine:
 
             /* Push the function name onto the functionsStack */
             push(functionsStack, strdup($2));
+            push(temporaryStack, strdup($2));
 
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -921,7 +957,6 @@ main:
 
             /* Push the function name to the stack */
             push(functionsStack, strdup("main"));
-            push(temporaryStack, strdup("main"));
 
             /* When we start the main function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -1747,6 +1782,12 @@ void printThreeAddressCode(node *tree, int indentLevel) {
     if (tree == NULL) return;
 
     if (strcmp(tree->token, "function") == 0) {
+
+        if (!isFunctionCalled(tree->left->token)) {
+            // If the function is not called, skip the generation of its code
+            return;
+        }
+
         // Print the function name
         indent(indentLevel);
         printf("\033[0;31m%s:\033[0m\n", tree->left->token);
@@ -2189,7 +2230,10 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-
+    // Check for dead code after parsing and before generating 3AC
+    if (!isDeadCode(current_table, *temporaryStack, root)) {
+        printf("There is no dead code in the program.\n");
+    }
 
     // ! WILL PRINT 3AC ON ACTIVATION.
     printThreeAddressCode(root, 0);
