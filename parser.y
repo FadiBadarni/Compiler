@@ -63,6 +63,9 @@
     node *root;
 
     bool calledFunctions[HASH_TABLE_SIZE] = {false}; // Hashtable of called functions
+    bool declaredVariables[HASH_TABLE_SIZE] = {false};
+    bool usedVariables[HASH_TABLE_SIZE] = {false};
+    char* variableNames[HASH_TABLE_SIZE] = {NULL}; // Parallel array to hold variable names
 
     symbol_table* createSymbolTable()
     {
@@ -741,6 +744,18 @@
         gatherCalledFunctions(root->right);
     }
 
+    void addDeclaredVariable(char* varName) {
+        int index = hash(varName);
+        declaredVariables[index] = true;
+        variableNames[index] = varName;
+    }
+
+    void useVariable(char* varName) {
+        int index = hash(varName);
+        usedVariables[index] = true;
+    }
+
+
     // Function to print the hash table
     void printHashTable() {
         for (int i = 0; i < HASH_TABLE_SIZE; i++) {
@@ -752,12 +767,13 @@
     // Check if there is a function that is defined but not called
     bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root) {
         bool deadCodeFound = false;
+        bool unusedVariableFound = false;
         function_stack_node* stackNode = functionStack;
 
         // Gather all called functions
         gatherCalledFunctions(root);
 
-        printHashTable();
+        // printHashTable();
 
         // Go through each function in the function stack
         while (stackNode != NULL) {
@@ -770,7 +786,15 @@
             stackNode = stackNode->next;
         }
 
-        return deadCodeFound;
+        // Go through the symbol table to find unused variables
+        for (int i = 0; i < HASH_TABLE_SIZE; i++) {
+            if (declaredVariables[i] && !usedVariables[i]) {
+                printf("Unused variable found: Variable '%s' is declared but never used.\n", variableNames[i]);
+                unusedVariableFound = true;
+            }
+        }
+
+        return deadCodeFound || unusedVariableFound;
     }
 
 %}
@@ -1062,6 +1086,8 @@ statement:
                     yyerror(errorMessage);
                     YYABORT;
                 }
+                // Add variable to declared list
+                addDeclaredVariable(id_node->token);
                 id_node = id_node->right;
             }
         }
@@ -1106,6 +1132,9 @@ statement:
                 yyerror(errorMessage);
                 YYABORT;
             }
+
+            // Mark variable as used
+            useVariable($1);
 
             // Check if the type of the expression matches the type of the variable
             char* expression_type = getTypeOfExpression($3);
