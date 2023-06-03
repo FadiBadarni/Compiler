@@ -7,6 +7,7 @@
     #include <stdarg.h>
     #include <ctype.h>
     #define HASH_TABLE_SIZE 509
+    #define EXPR_TABLE_SIZE 509
 
     typedef struct node
     {
@@ -66,6 +67,7 @@
     bool declaredVariables[HASH_TABLE_SIZE] = {false};
     bool usedVariables[HASH_TABLE_SIZE] = {false};
     char* variableNames[HASH_TABLE_SIZE] = {NULL}; // Parallel array to hold variable names
+    char* expressionTable[EXPR_TABLE_SIZE] = {NULL};
 
     symbol_table* createSymbolTable()
     {
@@ -1709,6 +1711,17 @@ int isOperator2(char* token) {
     return 0;
 }
 
+unsigned int hashExpression(char* expr) {
+    unsigned long hash = 5381;
+    int c;
+
+    while ((c = *expr++))
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+
+    return hash % EXPR_TABLE_SIZE;
+}
+
+
 node* createNode(char* token, node *left, node *right) {
     node *newNode = (node*)malloc(sizeof(node));
     if (newNode == NULL) {
@@ -2187,10 +2200,24 @@ void printThreeAddressCode(node *tree, int indentLevel) {
             printf("%s = %s\n", tree->left->token, tree->right->tac);
         }
         else if (isOperator2(tree->token)) {
-            // Allocate memory for the temporary variable
-            char *tempVar = (char*)malloc(10*sizeof(char));
-            // Generate the temporary variable name
-            sprintf(tempVar, "t%d", tempVarCounter++);
+            char *tempVar;
+            // Generate the hash of the expression
+            char *expr = malloc(20*sizeof(char));
+            sprintf(expr, "%s %s %s", tree->left->tac, tree->token, tree->right->tac);
+            int hash = hashExpression(expr);
+
+            if (expressionTable[hash] == NULL) {
+                // Allocate memory for the temporary variable
+                tempVar = (char*)malloc(10*sizeof(char));
+                // Generate the temporary variable name
+                sprintf(tempVar, "t%d", tempVarCounter++);
+                // Save this expression to the hash table
+                expressionTable[hash] = tempVar;
+            } else {
+                // Use the existing temporary variable
+                tempVar = expressionTable[hash];
+            }
+
             tree->tac = tempVar;
 
             // Print the TAC
