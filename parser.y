@@ -231,7 +231,6 @@
             fprintf(stderr, "Error: %s is not a function\n", functionName);
             return NULL;
         }
-
         /* If the function exists and its type is 'function', return its return type */
         return entry->return_type;
     }
@@ -779,7 +778,7 @@
         while (stackNode != NULL) {
             // If a function in the stack is not found being called in the AST, it's dead code
             if (!isFunctionCalled(stackNode->function_name)) {
-                printf("Dead code found: Function '%s' is never called.\n", stackNode->function_name);
+                printf("Unused Function found: Function '%s' is never called.\n", stackNode->function_name);
                 deadCodeFound = true;
             }
 
@@ -885,11 +884,10 @@ subroutine:
             addSymbolTableEntry($2, "function");
 
             setFunctionReturnType(peek(*functionsStack), $6->token);
+
         }
     LBRACE statements_list
         {
-            char *functionReturnType = getFunctionReturnType(peek(*functionsStack));
-
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
             popSymbolTable();
@@ -1101,6 +1099,9 @@ statement:
                 yyerror(errorMessage);
                 YYABORT;
             }
+
+            // Mark variable as used
+            useVariable($1);
 
             // Retrieve the function's return type
             char* functionReturnType = getFunctionReturnType($3->left->token);
@@ -1645,6 +1646,9 @@ atom:
                 yyerror("Undeclared identifier: %s", $1);
                 YYABORT;
             }
+            // Mark variable as used
+            useVariable($1);
+
             $$ = createNode($1, NULL, NULL);
         }
     | INT_LITERAL { $$ = createNode($1, NULL, NULL); }
@@ -1830,17 +1834,6 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         if(functionNode != NULL){
             argsNode = functionNode->left; // Fetch the 'arguments' node
         }
-        // TAC generation for each function argument
-        if(argsNode != NULL && strcmp(argsNode->token, "arguments") == 0) {
-            node *argumentNode = argsNode->left;
-            while(argumentNode != NULL) {
-                if (strcmp(argumentNode->token, "argument") == 0) {
-                    indent(indentLevel + 2);
-                    printf("Param %s\n", argumentNode->left->right->token);
-                }
-                argumentNode = argumentNode->right;
-            }
-        }
 
         // Traverse to the body node
         node *bodyNode = tree->right;
@@ -1854,7 +1847,6 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         }
         printf("\tEndFunc\n");
     }
-
     else if (strcmp(tree->token, "return") == 0) {
         printThreeAddressCode(tree->left, indentLevel);
         indent(indentLevel - 1);
@@ -2099,7 +2091,7 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         indent(indentLevel - 1);
         printf("L%d:\n", falseLabel);
     }
-   else if (strcmp(tree->token, "if_else") == 0) {
+    else if (strcmp(tree->token, "if_else") == 0) {
         int shortCircuitLabel, trueLabel, falseLabel, endLabel;
         trueLabel = labelCounter++;
 
@@ -2212,6 +2204,59 @@ void printThreeAddressCode(node *tree, int indentLevel) {
     }
 }
 
+void freeNode(node* n) {
+    if(n != NULL) {
+        free(n->token);
+        freeNode(n->left);
+        freeNode(n->right);
+        free(n);
+    }
+}
+
+node* constantFoldingOptimization(node* root) {
+    if(root == NULL) {
+        return NULL;
+    }
+
+    // Optimization for different node types
+    if(root->left != NULL && root->right != NULL) {
+        if(strcmp(root->token, "+") == 0) {
+            if(isRealLiteral(root->left->token) && isRealLiteral(root->right->token)) {
+                double leftVal = atof(root->left->token);
+                double rightVal = atof(root->right->token);
+                double result = leftVal + rightVal;
+                char* resultStr = (char*)malloc(20 * sizeof(char));
+                sprintf(resultStr, "%.2f", result);
+                free(root->token);
+                root->token = resultStr;
+                freeNode(root->left);
+                freeNode(root->right);
+                root->left = NULL;
+                root->right = NULL;
+            }
+            else if(isNumericLiteral(root->left->token) && isNumericLiteral(root->right->token)) {
+                int leftVal = atoi(root->left->token);
+                int rightVal = atoi(root->right->token);
+                int result = leftVal + rightVal;
+                char* resultStr = (char*)malloc(20 * sizeof(char));
+                sprintf(resultStr, "%d", result);
+                free(root->token);
+                root->token = resultStr;
+                freeNode(root->left);
+                freeNode(root->right);
+                root->left = NULL;
+                root->right = NULL;
+            }
+        }
+    }
+
+    // Apply the optimization recursively
+    root->left = constantFoldingOptimization(root->left);
+    root->right = constantFoldingOptimization(root->right);
+
+    return root;
+}
+
 int yyerror(const char *fmt, ...)
 {
     va_list args;
@@ -2258,6 +2303,9 @@ int main(int argc, char *argv[])
         fclose(inputFile);
         return -1;
     }
+
+    // Constant Folding Optimization
+    root = constantFoldingOptimization(root);
 
     // Check for dead code after parsing and before generating 3AC
     if (!isDeadCode(current_table, *temporaryStack, root)) {
