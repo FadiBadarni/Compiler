@@ -24,9 +24,9 @@
 "int"           { yylval.string = strdup(yytext); return INT; }
 "real"          { yylval.string = strdup(yytext); return REAL; }
 "string"        { yylval.string = strdup(yytext); return STRING; }
-"char*"         { yylval.string = strdup(yytext); return POINTER_TYPE; }
-"int*"          { yylval.string = strdup(yytext); return POINTER_TYPE; }
-"real*"         { yylval.string = strdup(yytext); return POINTER_TYPE; }
+"char*"         { yylval.string = strdup(yytext); return POINTER_CHAR; }
+"int*"          { yylval.string = strdup(yytext); return POINTER_INT; }
+"real*"         { yylval.string = strdup(yytext); return POINTER_REAL; }
 "if"            { yylval.string = strdup(yytext); return IF; }
 "else"          { yylval.string = strdup(yytext); return ELSE; }
 "while"         { yylval.string = strdup(yytext); return WHILE; }
@@ -52,8 +52,7 @@
 "!"         { return NOT;}
 "!="        { return NEQ;}
 "||"        { return OR;}
-"+"         { return PLUS;}
-"++"         { return INCREMENT;}
+"+"         { return PLUS;}/* "++"         { return INCREMENT;} */
 "*"         { return MULTI;}
 "&"         { return ADDRESS; }
 
@@ -74,7 +73,7 @@
     yylval.string = strdup(yytext);
     return INT_LITERAL;
 }
-[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)? {
+[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)? {
     yylval.string = strdup(yytext);
     return REAL_LITERAL;
 }
