@@ -166,8 +166,8 @@
         current_table->head = entry;
         entry->hasReturnStatement = 0;
 
-       // printf("Added symbol to table. Current table:\n");
-       // printSymbolTable(current_table);
+        printf("Added symbol to table. Current table:\n");
+        printSymbolTable(current_table);
 
         return 0;
     }
@@ -309,6 +309,7 @@
         if (len >= 2 && str[0] == '\"' && str[len - 1] == '\"') {
             return 1;
         }
+       
 
         // If the string does not match this pattern, it is not a string literal
         return 0;
@@ -326,7 +327,7 @@
     int isUnaryOperator(const char* token) {
         // Currently only support address-of operator
         return strcmp(token, "&") == 0 || strcmp(token, "*") == 0 || strcmp(token, "ARRAY_ELEMENT") == 0||strcmp(token, "+") == 0 ||strcmp(token, "-") == 0
-        ||strcmp(token, "abs") == 0 ;
+        ||strcmp(token, "abs") == 0 ||  strcmp(token, "!") == 0 ;
     }
 
     char* getNodeType(node *n);
@@ -344,7 +345,7 @@
             (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {
                 if (strcmp(leftType, "int") == 0 && strcmp(rightType, "int") == 0) {
                     return "int";
-                } else {
+                } else {      
                     return "real";
                 }
             } else {
@@ -371,7 +372,7 @@
         if (strcmp(operation, ">") == 0 || strcmp(operation, "<") == 0 ||
             strcmp(operation, "<=") == 0 || strcmp(operation, ">=") == 0) {
             if ((strcmp(leftType, "int") == 0 || strcmp(leftType, "real") == 0) &&
-                (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {
+                (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {   
                 return "bool";
             } else {
                 char errorMessage[100];
@@ -389,6 +390,7 @@
                 // Handle the case of comparing a pointer with a non-pointer
                 if ((leftType[0] == '*' && strcmp(leftType, rightType + 1) == 0) ||
                     (rightType[strlen(rightType) - 1] == '*' && strcmp(rightType, leftType + 1) == 0)) {
+                         printf("bool\n");
                     return "bool";
                 }
                 char errorMessage[150];
@@ -400,9 +402,9 @@
 
         // Handle array indexing
         if (strcmp(operation, "array_index") == 0) {
-            if (strcmp(leftType, "string") == 0 && strcmp(rightType, "int") == 0) {
+            if (strcmp(leftType, "string") == 0 && strcmp(rightType, "int") == 0) {       
                 return "char";
-            } if (strcmp(leftType, "ptr_real") == 0 && (strcmp(rightType, "int") == 0||strcmp(rightType, "real") == 0)) {
+            } if (strcmp(leftType, "ptr_real") == 0 && (strcmp(rightType, "int") == 0||strcmp(rightType, "real") == 0)) {     
                 return "real";
             }
             if (strcmp(leftType, "ptr_char") == 0 && strcmp(rightType, "char") == 0) {
@@ -427,43 +429,46 @@
 
     char* checkUnaryOperationType(node *operand, char *operation) {
 
+        char * nodeType =getNodeType(operand);
      
-        if (strcmp(operation, "-") == 0|| strcmp(operation, "+") == 0) {
-                return "int";
+        if ((strcmp(operation, "-") == 0|| strcmp(operation, "+") == 0 )&& (strcmp(nodeType,"int")==0||strcmp(nodeType,"real")==0)){
+                return nodeType;
         }
         
+
+         
 
         symbol_table_entry *entry = lookupSymbolTable(operand->token);
      
             
-        if (entry == NULL) {
+        // if (entry == NULL) {
+        //     char errorMessage[150];
+        //     sprintf(errorMessage, "Error: Undefined variable: %s\n", operand->token);
+        //     yyerror(errorMessage);
+        //     return NULL;
+        // }
+        if (strcmp(operation, "!") == 0 && strcmp(nodeType, "bool") != 0) {
             char errorMessage[150];
-            sprintf(errorMessage, "Error: Undefined variable: %s\n", operand->token);
+            sprintf(errorMessage, "Error: Invalid type for operation '!'. Operand must be of type bool, but got %s\n", nodeType);
             yyerror(errorMessage);
             return NULL;
         }
-        if (strcmp(operation, "!") == 0 && strcmp(entry->type, "bool") != 0) {
+        if (strcmp(operation, "abs") == 0 && !(strcmp(nodeType, "string") == 0 || strcmp(nodeType, "ptr_char") == 0)) {
             char errorMessage[150];
-            sprintf(errorMessage, "Error: Invalid type for operation '!'. Operand must be of type bool, but got %s\n", entry->type);
-            yyerror(errorMessage);
-            return NULL;
-        }
-        if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "string") == 0 || strcmp(entry->type, "ptr_char") == 0)) {
-            char errorMessage[150];
-            sprintf(errorMessage, "Error: Invalid type for operation 'abs'. Operand must be of type int or real, but got %s\n", entry->type);
+            sprintf(errorMessage, "Error: Invalid type for operation 'abs'. Operand must be of type int or real, but got %s\n", nodeType);
             yyerror(errorMessage);
             return NULL;
         }
         if (strcmp(operation, "&") == 0) {
-             if ((strcmp(entry->type, "char") == 0 || strcmp(entry->type, "string") == 0))
+             if ((strcmp(nodeType, "char") == 0 || strcmp(nodeType, "string") == 0))
                 return "ptr_char";
-            else if(strcmp(entry->type, "int") == 0 )
+            else if(strcmp(nodeType, "int") == 0 )
                 return "ptr_int";
-            else if(strcmp(entry->type, "real") == 0)
+            else if(strcmp(nodeType, "real") == 0)
                 return "ptr_real";
             else {
                 char errorMessage[150];
-                sprintf(errorMessage, "Error: Invalid type for dereference operation. & for %s ", entry->type);
+                sprintf(errorMessage, "Error: Invalid type for dereference operation. & for %s ", nodeType);
                 yyerror(errorMessage);
                     return NULL;
             }
@@ -476,16 +481,16 @@
             //     yyerror(errorMessage);
             //         return NULL;
             // }
-            printf("\n\n\n___ok______\n\n\n");
-            if ((strcmp(entry->type, "ptr_char") == 0 || strcmp(entry->type, "string") == 0))
+
+            if ((strcmp(nodeType, "ptr_char") == 0 || strcmp(nodeType, "string") == 0))
                 return "char";
-            else if( strcmp(entry->type, "ptr_int") == 0 )
+            else if( strcmp(nodeType, "ptr_int") == 0 )
                 return "int";
-            else if(strcmp(entry->type, "ptr_real") == 0)
+            else if(strcmp(nodeType, "ptr_real") == 0)
                 return "real";
             else {
                 char errorMessage[150];
-                sprintf(errorMessage, "Error: Invalid type for dereference operation. Operand must be of pointer type, but got %s\n", entry->type);
+                sprintf(errorMessage, "Error: Invalid type for dereference operation. Operand must be of pointer type, but got %s\n", nodeType);
                 yyerror(errorMessage);
                     return NULL;
             }
@@ -498,7 +503,7 @@
          if(strcmp(operation, "abs") == 0 )
             return "int";
 
-        return entry->type;
+        return nodeType;
     }
 
     /* A helper function to check whether a token is an operator */
@@ -521,6 +526,8 @@
             return NULL;
         }
         if (n->left == NULL && n->right == NULL) { // Identifier or literal
+
+         
             if (isOperator(n->token)) {
                 return NULL; // Operators don't have a type in the same sense as variables or literals
             }
@@ -539,6 +546,10 @@
             if (isRealLiteral(n->token)) {
                 return "real";
             }
+            if(strcmp(n->token,"null")==0)
+            {
+                return "null";
+            }
             symbol_table_entry* entry = lookupSymbolTable(n->token);
             if (entry == NULL) {
                 yyerror("Undeclared identifier: %s", n->token);
@@ -554,6 +565,7 @@
         }
         else if (n->right == NULL) { // Unary operation
       
+        
             if (!isUnaryOperator(n->token)) {
                 yyerror("Unexpected operator in unary operation");
                 return NULL;
@@ -568,6 +580,7 @@
             char* leftType = getNodeType(n->left);
             char* rightType = getNodeType(n->right);
 
+           
             if (leftType == NULL || rightType == NULL) {
                 return NULL; // Error would have been printed already
             }
@@ -1091,8 +1104,16 @@ statement:
                 YYABORT;
             }
             if (strcmp(entry->type, expression_type) != 0) {
-                yyerror("Type mismatch in assignment. Expected: %s, Found: %s", entry->type, expression_type);
-                YYABORT;
+                if(strcmp(expression_type,"null")==0)
+                {
+                 if(strcmp(entry->type,"ptr_char")!=0 && strcmp(entry->type,"ptr_int")!=0 && strcmp(entry->type,"ptr_real")!=0)
+                {
+                    yyerror("Type mismatch in assignment. Expected: %s, Found: %s", entry->type, expression_type);
+                     YYABORT;
+                }
+             
+                }
+              
             }
         }
     | MULTI IDENTIFIER ASSIGNMENT expression SEMICOLON
@@ -1161,7 +1182,25 @@ statement:
             $$ = createNode("declare_string", createNode($2, NULL, NULL), createNode($4, NULL, NULL));
         } /* Strings declarations */
     | STRING IDENTIFIER LBRACKET INT_LITERAL RBRACKET ASSIGNMENT STRING_LITERAL SEMICOLON
-        { $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL))); }
+        {
+            // $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL)));
+        
+         if (current_table == NULL) {
+                yyerror("Error: Symbol table is not initialized\n");
+                YYABORT;
+            }
+            symbol_table_entry* entry = lookupSymbolTableInCurrentScope($2);
+            if (entry != NULL) {
+                yyerror("Error: Variable %s already declared\n", $2);
+                YYABORT;
+            }
+
+            addSymbolTableEntry($2, $1);
+            $$ = createNode("declare_string", createNode($2, NULL, NULL), createNode($4, NULL, NULL));
+        
+        
+        
+         }
     | IDENTIFIER LBRACKET expression RBRACKET ASSIGNMENT CHAR_LITERAL SEMICOLON
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     
@@ -1386,42 +1425,42 @@ expression:
     /* Logical and relational operations */
     
     /* | term EQUALS term */
-    expression AND term {
+    expression AND expression {
         if(checkBinaryOperationType($1, $3, "&&") == NULL)
             YYABORT;
         $$ = createNode("&&", $1, $3);
     }
-    | expression OR term {
+    | expression OR expression {
         if(checkBinaryOperationType($1, $3, "||") == NULL)
             YYABORT;
         $$ = createNode("||", $1, $3);
     }
-    | expression EQUALS term {
+    | expression EQUALS expression {
         if(checkBinaryOperationType($1, $3, "==") == NULL)
             YYABORT;
         $$ = createNode("==", $1, $3);
     }
-    | expression NEQ term {
+    | expression NEQ expression {
         if(checkBinaryOperationType($1, $3, "!=") == NULL)
             YYABORT;
         $$ = createNode("!=", $1, $3);
     }
-    | expression LT term {
+    | expression LT expression {
         if(checkBinaryOperationType($1, $3, "<") == NULL)
             YYABORT;
         $$ = createNode("<", $1, $3);
     }
-    | expression GT term {
+    | expression GT expression {
         if(checkBinaryOperationType($1, $3, ">") == NULL)
             YYABORT;
         $$ = createNode(">", $1, $3);
     }
-    | expression LTE term {
+    | expression LTE expression {
         if(checkBinaryOperationType($1, $3, "<=") == NULL)
             YYABORT;
         $$ = createNode("<=", $1, $3);
     }
-    | expression GTE term {
+    | expression GTE expression {
         if(checkBinaryOperationType($1, $3, ">=") == NULL)
             YYABORT;
         $$ = createNode(">=", $1, $3);
@@ -1439,7 +1478,7 @@ expression:
         }
         $$ = createNode("=", createNode($1, NULL, NULL), $3);
     }
-    | term
+    | term  {$$=$1;}
     ;
 
 term:
@@ -1454,7 +1493,7 @@ term:
             YYABORT;
         $$ = createNode("-", $1, $3);
     }
-    | factor
+    | factor  {$$=$1;}
     ;
 
 factor:
@@ -1469,7 +1508,7 @@ factor:
             YYABORT;
         $$ = createNode("/", $1, $3);
     }
-    | unary
+    | unary  {$$=$1;}
 
     ;
 
@@ -1485,7 +1524,7 @@ unary:
         //     YYABORT;
          $$ = createNode("+", $2, NULL);
     }
-    |NOT unary {
+    |NOT     unary {
         if(checkUnaryOperationType($2, "!") == NULL)
             YYABORT;
         $$ = createNode("!", $2, NULL);
@@ -1540,7 +1579,7 @@ unary:
         node* identifier_node = createNode("identifier", createNode($1, NULL, NULL), NULL);
         $$ = createNode("post_inc", identifier_node, createNode("increment", NULL, NULL));
     }
-    | atom
+    | atom {$$=$1;}
     ;
 
 atom:
