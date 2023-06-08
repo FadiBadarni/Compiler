@@ -537,42 +537,10 @@ statement:
                 id_node = id_node->right;
             }
         }
-    | IDENTIFIER ASSIGNMENT function_call SEMICOLON
-        {
-            // Check if variable has been declared
-            symbol_table_entry* entry = lookupSymbolTable($1);
-            if (entry == NULL) {
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Variable '%s' not defined.", $1);
-                yyerror(errorMessage);
-                YYABORT;
-            }
-
-            // Mark variable as used
-            useVariable($1);
-
-            // Retrieve the function's return type
-            char* functionReturnType = getFunctionReturnType($3->left->token);
-            if (functionReturnType == NULL) {
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Failed to retrieve return type for function '%s'.", $3->left->token);
-                yyerror(errorMessage);
-                YYABORT;
-            }
-
-            // Check if the return type of the function matches the type of the identifier
-            if (strcmp(entry->type, functionReturnType) != 0) {
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, functionReturnType);
-                yyerror(errorMessage);
-                YYABORT;
-            }
-
-            $$ = createNode("=", createNode($1, NULL, NULL), $3);
-        }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         {
             $$ = createNode("=", createNode($1, NULL, NULL), $3);
+
             // Check if variable has been declared
             symbol_table_entry* entry = lookupSymbolTable($1);
             if (entry == NULL) {
@@ -591,11 +559,32 @@ statement:
                 // An error message would have been printed by getTypeOfExpression
                 YYABORT;
             }
+
             if (strcmp(entry->type, expression_type) != 0) {
                 char errorMessage[150];
                 sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, expression_type);
                 yyerror(errorMessage);
                 YYABORT;
+            }
+
+            // Check if expression is a function call and perform the necessary actions
+            if(strcmp($3->token, "call") == 0) {
+                // Retrieve the function's return type
+                char* functionReturnType = getFunctionReturnType($3->left->token);
+                if (functionReturnType == NULL) {
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Failed to retrieve return type for function '%s'.", $3->left->token);
+                    yyerror(errorMessage);
+                    YYABORT;
+                }
+
+                // Check if the return type of the function matches the type of the identifier
+                if (strcmp(entry->type, functionReturnType) != 0) {
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, functionReturnType);
+                    yyerror(errorMessage);
+                    YYABORT;
+                }
             }
         }
     | MULTI IDENTIFIER ASSIGNMENT expression SEMICOLON
@@ -948,6 +937,7 @@ expression:
     }
     | assignment
     | relational
+    | function_call
     ;
 
 assignment:
@@ -1662,6 +1652,15 @@ char* getNodeType(node *n) {
         }
         return entry->type;
     }
+    else if (strcmp(n->token, "call") == 0) { // Function call
+        // assume the function return type is stored in the symbol table
+        symbol_table_entry* entry = lookupSymbolTable(n->left->token); // n->left->token is function name
+        if (entry == NULL) {
+            yyerror("Error: Function '%s' not declared", n->left->token);
+            return NULL;
+        }
+        return entry->type; // return type of the function
+    }
     else if (n->right == NULL) { // Unary operation
         if (!isUnaryOperator(n->token)) {
             yyerror("Error: Operator '%s' not applicable in unary operation", n->token);
@@ -1737,6 +1736,16 @@ char* getTypeOfExpression(node* expr) {
     }
     /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
     else {
+        // Check if it's a function call
+        if (strcmp(expr->token, "call") == 0) {
+            symbol_table_entry *entry = lookupSymbolTable(expr->left->token); // Assuming left node holds function name
+            if (entry != NULL && strcmp(entry->type, "function") == 0) {
+                return entry->return_type;
+            } else {
+                yyerror("Function %s is not declared in any scope\n", expr->left->token);
+                return NULL;
+            }
+        }
         if (expr->token[0] == '&') {
             if(strcmp(expr->left->token, "ARRAY_ELEMENT") == 0) {
                 symbol_table_entry* entry = lookupSymbolTable(expr->left->left->token);
