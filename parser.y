@@ -258,7 +258,7 @@
 // Definitions for nonterminal symbols, specifying what type of value they will hold
 %type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
-%type <node> program return_type relational
+%type <node> program return_type relational assignment
 %type <node> code_block if_statement while_statement do_while_statement for_statement factor term unary atom
 
 // Operator precedence, from highest to lowest
@@ -368,7 +368,6 @@ subroutine:
     arguments RPAREN COLON return_type
         {
             /* Extract the return type */
-
             setFunctionReturnType(peek(*functionsStack), $8->token);
 
         }
@@ -463,7 +462,18 @@ arguments_list:
 
 /* Used to parse individual arguments. */
 argument:
-    IDENTIFIER ARROW identifiers_list COLON type
+    IDENTIFIER ARROW identifiers_list COLON POINTER_TYPE
+        {
+            /* Add argument to symbol table */
+            char *argumentName = $1;
+            char *argumentType = $5;
+
+            // Process identifiers_list
+            processIdentifiers($3, argumentType);
+
+            $$ = createNode("argument", createNode(argumentType, NULL, NULL), $3);
+        }
+    | IDENTIFIER ARROW identifiers_list COLON type
         {
             /* Add argument to symbol table */
             char *argumentName = $1;
@@ -936,8 +946,21 @@ expression:
             YYABORT;
         $$ = createNode("||", $1, $3);
     }
+    | assignment
     | relational
     ;
+
+assignment:
+    IDENTIFIER ASSIGNMENT expression {
+        symbol_table_entry* entry = lookupSymbolTable($1);
+        if (entry == NULL) {
+            yyerror("Undeclared identifier: %s", $1);
+            YYABORT;
+        }
+        $$ = createNode("=", createNode($1, NULL, NULL), $3);
+    }
+;
+
 
 relational:
     /* Relational operations */
@@ -1396,25 +1419,36 @@ int countNodes(node *n) {
 }
 
 int isNumericLiteral(const char* str) {
-    // Loop over each character in the string.
-    for(int i = 0; str[i] != '\0'; i++) {
-        // if a character is not a digit, return false
+    int start = 0;
+
+    // If the string starts with a '-', it could be a negative number
+    // So start checking from the second character
+    if (str[0] == '-') {
+        start = 1;
+    }
+
+    for(int i = start; str[i] != '\0'; i++) {
         if (!isdigit(str[i])) {
             return 0;
         }
     }
 
-    // if all characters were digits, return true
     return 1;
 }
 
 int isCharLiteral(const char* str) {
     // str[0] should be a single quote, str[1] any character and str[2] a single quote again
-    if (strlen(str) == 3 && str[0] == '\'' && str[2] == '\'') {
+    if (strlen(str) == 4 && str[0] == '\'' && str[3] == '\'') {
+        // Check if it's a null character
+        if (str[1] == '\\' && str[2] == '0') {
+            return 1;
+        }
+    }
+    else if (strlen(str) == 3 && str[0] == '\'' && str[2] == '\'') {
         return 1;
     }
 
-    // if the string does not match this pattern, it is not a char literal
+    // if the string does not match these patterns, it is not a char literal
     return 0;
 }
 
@@ -1435,8 +1469,11 @@ int isRealLiteral(const char* str) {
     char* endptr;
     strtod(str, &endptr);
 
-    // If the endptr points to the end of the string, and the string is not empty,
-    // then the entire string was successfully converted to a double.
+    // Check if the string contains a decimal point '.'
+    if (strchr(str, '.') == NULL) {
+        return 0;
+    }
+
     return *endptr == '\0' && str != endptr && *str != '\0';
 }
 
@@ -1516,9 +1553,17 @@ char* checkBinaryOperationType(node *left, node *right, char *operation) {
     if (strcmp(operation, "array_index") == 0) {
         if (strcmp(leftType, "string") == 0 && strcmp(rightType, "int") == 0) {
             return "char";
-        } else {
+        }
+        // Check if the left operand type ends with '*' (is a pointer)
+        else if (leftType[strlen(leftType) - 1] == '*' && strcmp(rightType, "int") == 0) {
+            // Copy the left type and remove the last character (*) to get the indexed type
+            char *indexedType = strdup(leftType);
+            indexedType[strlen(indexedType) - 1] = '\0';
+            return indexedType;
+        }
+        else {
             char errorMessage[150];
-            sprintf(errorMessage, "Error: Invalid types for array indexing. Left operand must be of type string and right operand must be of type int, but got '%s' and '%s'", leftType, rightType);
+            sprintf(errorMessage, "Error: Invalid types for array indexing. Left operand must be of pointer type and right operand must be of type int, but got '%s' and '%s'", leftType, rightType);
             yyerror(errorMessage);
             return NULL;
         }
