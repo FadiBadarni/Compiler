@@ -526,7 +526,8 @@ single_statement:
                     yyerror(errorMessage);
                     YYABORT;
                 }
-                id_node = id_node->left;
+                addDeclaredVariable(id_node->token);
+                id_node = id_node->right;
                 free(type);
             }
         }
@@ -548,6 +549,38 @@ single_statement:
                 id_node = id_node->right;
             }
         }
+    | VAR IDENTIFIER ASSIGNMENT expression COLON type SEMICOLON
+    {
+        // Assuming $2 is a linked list of identifier names
+        node* id_node = createNode($2, NULL, NULL);
+
+        if (addSymbolTableEntry(id_node->token, $6->token) == -1) {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Variable '%s' redeclaration or memory allocation error.", id_node->token);
+            yyerror(errorMessage);
+            YYABORT;
+        }
+
+        // Add variable to declared list
+        addDeclaredVariable(id_node->token);
+
+        // Perform type check between assigned expression and declared type
+        char* expression_type = getTypeOfExpression($4);
+        if (expression_type == NULL) {
+            // An error message would have been printed by getTypeOfExpression
+            YYABORT;
+        }
+
+        if (strcmp($6->token, expression_type) != 0) {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $2, $6->token, expression_type);
+            yyerror(errorMessage);
+            YYABORT;
+        }
+
+        // Create the AST node
+        $$ = createNode("declare_assign", id_node, createNode($6->token, $4, NULL));
+    }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         {
             $$ = createNode("=", createNode($1, NULL, NULL), $3);
@@ -572,10 +605,16 @@ single_statement:
             }
 
             if (strcmp(entry->type, expression_type) != 0) {
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, expression_type);
-                yyerror(errorMessage);
-                YYABORT;
+                // Allow assignment of null to any pointer type
+                if (strcmp(expression_type, "null") == 0 && strchr(entry->type, '*') != NULL) {
+                    // Do nothing, assignment of null to pointer type is allowed
+                }
+                else {
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, expression_type);
+                    yyerror(errorMessage);
+                    YYABORT;
+                }
             }
 
             // Check if expression is a function call and perform the necessary actions
@@ -1877,6 +1916,9 @@ char* getNodeType(node *n) {
         }
         if (isStringLiteral(n->token)) {
             return "string";
+        }
+        if (strcmp(n->token, "null") == 0) {
+            return "null";
         }
         if (isRealLiteral(n->token)) {
             return "real";
