@@ -180,6 +180,8 @@
     // Prints the contents of the hash tables
     void printHashTable();
 
+    bool findEmptyIfElse(node* n);
+
     // Checks if a piece of code is dead code
     bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root);
 
@@ -218,6 +220,8 @@
 
     // Error handling function, prints an error message and exits the program
     int yyerror(const char *fmt, ...);
+
+    void yywarn(const char *fmt, ...);
 
 %}
 
@@ -843,6 +847,18 @@ if_statement:
                 YYABORT;
             }
 
+            /* Check if the code blocks for 'if' or 'else' are empty */
+            if ($6->left == NULL && $6->right == NULL) {
+                char warnMessage[50];
+                sprintf(warnMessage, "Empty 'if' statement found.");
+                yywarn(warnMessage);
+            }
+            if ($10->left == NULL && $10->right == NULL) {
+                char warnMessage[50];
+                sprintf(warnMessage, "Empty 'else' statement found.");
+                yywarn(warnMessage);
+            }
+
             /* Push a new symbol table for if statement scope */
             symbol_table *ifTable = createSymbolTable();
             pushSymbolTable(ifTable);
@@ -873,6 +889,13 @@ if_statement:
             /* Push a new symbol table for if statement scope */
             symbol_table *ifTable = createSymbolTable();
             pushSymbolTable(ifTable);
+
+            /* Check if the code blocks for 'if' is empty */
+            if ($6->left == NULL && $6->right == NULL) {
+                char warnMessage[50];
+                sprintf(warnMessage, "Empty 'if' statement found.");
+                yywarn(warnMessage);
+            }
 
             $$ = createNode("if", $3, createNode("if_body", $6, NULL));
 
@@ -2108,9 +2131,44 @@ void printHashTable() {
     }
 }
 
+bool findEmptyIfElse(node* n) {
+    if (n == NULL) return false;
+
+    // Check if the node is an if_else block
+    if (strcmp(n->token, "if_else") == 0) {
+        node* if_else_wrapper = n->right;
+        if (if_else_wrapper != NULL) {
+            node* if_body = if_else_wrapper->left;
+            node* else_body = if_else_wrapper->right;
+
+            // Check if if_body or else_body has no statements
+            if (if_body != NULL && if_body->left != NULL && if_body->left->left == NULL) {
+                return true;
+            }
+            if (else_body != NULL && else_body->left != NULL && else_body->left->left == NULL) {
+                return true;
+            }
+        }
+    } else if (strcmp(n->token, "if") == 0) {
+        node* if_body = n->right;
+
+        // Check if if_body has no statements
+        if (if_body != NULL && if_body->left != NULL && if_body->left->left == NULL) {
+            return true;
+        }
+    }
+
+    // Recurse on the children of the node
+    return findEmptyIfElse(n->left) || findEmptyIfElse(n->right);
+}
+
+
+
 bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root) {
     bool deadCodeFound = false;
     bool unusedVariableFound = false;
+    bool emptyIfElseFound = false;
+
     function_stack_node* stackNode = functionStack;
 
     // Gather all called functions
@@ -2137,7 +2195,9 @@ bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* r
         }
     }
 
-    return deadCodeFound || unusedVariableFound;
+    emptyIfElseFound = findEmptyIfElse(root);
+
+    return deadCodeFound || unusedVariableFound || emptyIfElseFound;
 }
 
 int isOperator2(char* token) {
@@ -2444,7 +2504,13 @@ void printThreeAddressCode(node *tree, int indentLevel) {
     }
     else if (strcmp(tree->token, "if") == 0) {
         int shortCircuitLabel, trueLabel, falseLabel;
-        trueLabel = labelCounter++;
+
+        node* if_body = tree->right;
+        bool if_body_empty = if_body != NULL && if_body->left != NULL && if_body->left->left == NULL;
+
+        if (!if_body_empty) {
+            trueLabel = labelCounter++;
+        }
 
         if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
             printThreeAddressCode(tree->left->left, indentLevel);
@@ -2500,8 +2566,10 @@ void printThreeAddressCode(node *tree, int indentLevel) {
             printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
 
             // If condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar, trueLabel);
+            if (!if_body_empty) {
+                indent(indentLevel);
+                printf("if %s goto L%d\n", tempVar, trueLabel);
+            }
 
             // Label to skip the if body if condition is false
             falseLabel = labelCounter++;
@@ -2510,99 +2578,122 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         }
 
         // Three address code for 'if' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", trueLabel);
-        printThreeAddressCode(tree->right, indentLevel);
+        if (!if_body_empty) {
+            indent(indentLevel - 1);
+            printf("L%d:\n", trueLabel);
+            printThreeAddressCode(if_body, indentLevel);
 
-        // Label for the rest of the code after the 'if' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", falseLabel);
+            // Label for the rest of the code after the 'if' body
+            indent(indentLevel - 1);
+            printf("L%d:\n", falseLabel);
+        }
     }
     else if (strcmp(tree->token, "if_else") == 0) {
-        int shortCircuitLabel, trueLabel, falseLabel, endLabel;
-        trueLabel = labelCounter++;
+        node* if_else_wrapper = tree->right;
+        node* if_body = if_else_wrapper->left;
+        node* else_body = if_else_wrapper->right;
 
-        if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
-            printThreeAddressCode(tree->left->left, indentLevel);
+        // check if if_body and else_body have statements
+        bool if_body_empty = if_body != NULL && if_body->left != NULL && if_body->left->left == NULL;
+        bool else_body_empty = else_body != NULL && else_body->left != NULL && else_body->left->left == NULL;
 
-            char *tempVar1 = (char*)malloc(10*sizeof(char));
-            sprintf(tempVar1, "t%d", tempVarCounter++);
-            tree->left->left->tac = tempVar1;
+        if (!if_body_empty || !else_body_empty) { // Only generate code if either the if or else body is not empty
+            int shortCircuitLabel, trueLabel, falseLabel, endLabel;
 
-            indent(indentLevel);
-            printf("%s = %s %s %s\n", tempVar1, tree->left->left->left->tac, tree->left->left->token, tree->left->left->right->tac);
+            if (!if_body_empty) {
+                trueLabel = labelCounter++;
+            }
 
-            // Left condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar1, trueLabel);
+            if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
+                printThreeAddressCode(tree->left->left, indentLevel);
 
-            // If the first condition is false, we go to the second condition
-            shortCircuitLabel = labelCounter++;
+                char *tempVar1 = (char*)malloc(10*sizeof(char));
+                sprintf(tempVar1, "t%d", tempVarCounter++);
+                tree->left->left->tac = tempVar1;
 
-            indent(indentLevel);
-            printf("goto L%d\n", shortCircuitLabel);
+                indent(indentLevel);
+                printf("%s = %s %s %s\n", tempVar1, tree->left->left->left->tac, tree->left->left->token, tree->left->left->right->tac);
 
-            // Print label for the second condition
+                // Left condition test and jump
+                indent(indentLevel);
+                printf("if %s goto L%d\n", tempVar1, trueLabel);
+
+                // If the first condition is false, we go to the second condition
+                shortCircuitLabel = labelCounter++;
+
+                indent(indentLevel);
+                printf("goto L%d\n", shortCircuitLabel);
+
+                // Print label for the second condition
+                indent(indentLevel - 1);
+                printf("L%d:\n", shortCircuitLabel);
+
+                // Second condition generation
+                printThreeAddressCode(tree->left->right, indentLevel);
+
+                char *tempVar2 = (char*)malloc(10*sizeof(char));
+                sprintf(tempVar2, "t%d", tempVarCounter++);
+                tree->left->right->tac = tempVar2;
+
+                indent(indentLevel);
+                printf("%s = %s %s %s\n", tempVar2, tree->left->right->left->tac, tree->left->right->token, tree->left->right->right->tac);
+
+                // Right condition test and jump
+                indent(indentLevel);
+                printf("if %s goto L%d\n", tempVar2, trueLabel);
+
+                // Label to skip the if body if both conditions are false
+                falseLabel = labelCounter++;
+                indent(indentLevel);
+                printf("goto L%d\n", falseLabel);
+            } else {
+                // Three address code for 'if' condition for non logical operations
+                printThreeAddressCode(tree->left, indentLevel);
+
+                char *tempVar = (char*)malloc(10*sizeof(char));
+                sprintf(tempVar, "t%d", tempVarCounter++);
+                tree->left->tac = tempVar;
+
+                indent(indentLevel);
+                printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+
+                // If condition test and jump
+                if (!if_body_empty) {
+                    indent(indentLevel);
+                    printf("if %s goto L%d\n", tempVar, trueLabel);
+                }
+
+                // Label to skip the if body if condition is false
+                falseLabel = labelCounter++;
+                indent(indentLevel);
+                printf("goto L%d\n", falseLabel);
+            }
+
+            // Three address code for 'if' body
+            if (!if_body_empty) {
+                indent(indentLevel - 1);
+                printf("L%d:\n", trueLabel);
+                printThreeAddressCode(if_body, indentLevel);
+            }
+
+            // Label for the end of the 'if' block
+            endLabel = labelCounter++;
+            if (!if_body_empty) {
+                indent(indentLevel);
+                printf("goto L%d\n", endLabel);
+            }
+
+            // Label and three address code for 'else' body
+            if (!else_body_empty) {
+                indent(indentLevel - 1);
+                printf("L%d:\n", falseLabel);
+                printThreeAddressCode(else_body, indentLevel);
+            }
+
+            // Print end label
             indent(indentLevel - 1);
-            printf("L%d:\n", shortCircuitLabel);
-
-            // Second condition generation
-            printThreeAddressCode(tree->left->right, indentLevel);
-
-            char *tempVar2 = (char*)malloc(10*sizeof(char));
-            sprintf(tempVar2, "t%d", tempVarCounter++);
-            tree->left->right->tac = tempVar2;
-
-            indent(indentLevel);
-            printf("%s = %s %s %s\n", tempVar2, tree->left->right->left->tac, tree->left->right->token, tree->left->right->right->tac);
-
-            // Right condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar2, trueLabel);
-
-            // Label to skip the if body if both conditions are false
-            falseLabel = labelCounter++;
-            indent(indentLevel);
-            printf("goto L%d\n", falseLabel);
-        } else {
-            // Three address code for 'if' condition for non logical operations
-            printThreeAddressCode(tree->left, indentLevel);
-
-            char *tempVar = (char*)malloc(10*sizeof(char));
-            sprintf(tempVar, "t%d", tempVarCounter++);
-            tree->left->tac = tempVar;
-
-            indent(indentLevel);
-            printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
-
-            // If condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar, trueLabel);
-
-            // Label to skip the if body if condition is false
-            falseLabel = labelCounter++;
-            indent(indentLevel);
-            printf("goto L%d\n", falseLabel);
+            printf("L%d:\n", endLabel); // print label for end of 'if_else' structure
         }
-
-        // Three address code for 'if' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", trueLabel);
-        printThreeAddressCode(tree->right->left, indentLevel);
-
-        // Label for the end of the 'if' block
-        endLabel = labelCounter++;
-        indent(indentLevel);
-        printf("goto L%d\n", endLabel);
-
-        // Label and three address code for 'else' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", falseLabel);
-        printThreeAddressCode(tree->right->right, indentLevel);
-
-        // Print end label
-        indent(indentLevel - 1);
-        printf("L%d:\n", endLabel); // print label for end of 'if_else' structure
     }
     else {
             // Generate Three Address Code recursively in post-order
@@ -2761,6 +2852,18 @@ int yyerror(const char *fmt, ...)
 
     va_end(args);
     return 0;
+}
+
+void yywarn(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+
+    fprintf(stderr, "Warning at line %d: ", yylineno);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+
+    va_end(args);
 }
 
 int main(int argc, char *argv[])
