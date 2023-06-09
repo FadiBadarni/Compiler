@@ -6,704 +6,218 @@
     #include <stdbool.h>
     #include <stdarg.h>
     #include <ctype.h>
+    #define HASH_TABLE_SIZE 509
+    #define EXPR_TABLE_SIZE 509
 
+    // Structure representing a node in the abstract syntax tree
     typedef struct node
     {
-        char *token;
-        struct node *left;
-        struct node *right;
-        char *tac;
+        char *token;  // The token associated with the node
+        struct node *left;  // Left child of the node
+        struct node *right;  // Right child of the node
+        char *tac;  // Three-address code associated with this node
     } node;
 
+    // Structure representing an entry in the arguments list of a function
     typedef struct argument_entry
     {
-        char *name;
-        char *type;
-        struct argument_entry *next;
+        char *name;  // Name of the argument
+        char *type;  // Type of the argument
+        struct argument_entry *next;  // Pointer to the next argument in the list
     } argument_entry;
 
+    // Structure representing an entry in the symbol table
     typedef struct symbol_table_entry
     {
-        char *name;
-        char *type;
-        argument_entry *arguments;
-        char *return_type;
-        int hasReturnStatement;
-        struct symbol_table_entry *next;
+        char *name;  // Name of the symbol (variable or function name)
+        char *type;  // Type of the symbol (could be variable type or function return type)
+        argument_entry *arguments;  // If symbol is a function, this is its arguments list
+        char *return_type;  // Return type of the function, if the symbol is a function
+        int hasReturnStatement;  // Flag indicating if the function has a return statement
+        struct symbol_table_entry *next;  // Pointer to the next entry in the symbol table
     } symbol_table_entry;
 
+    // Structure representing the symbol table
     typedef struct symbol_table
     {
-        symbol_table_entry *head;
-        struct symbol_table *prev;
+        symbol_table_entry *head;  // Pointer to the first entry in the table
+        struct symbol_table *prev;  // Pointer to the previous symbol table in the stack
     } symbol_table;
 
+    // Structure representing a node in the stack of function names
     typedef struct function_stack_node
     {
-        char* function_name;
-        struct function_stack_node* next;
+        char* function_name;  // Name of the function
+        struct function_stack_node* next;  // Pointer to the next function in the stack
     } function_stack_node;
 
+    int labelCounter = 0;  // Counter for generating unique labels
+    int tempVarCounter = 0;  // Counter for generating unique temporary variables
+    int printlevel = 0;  // Current level of printing (used for indentation)
 
+    // Arrays for tracking status of functions and variables
+    bool calledFunctions[HASH_TABLE_SIZE] = {false}; // Hashtable to check if functions were called
+    bool declaredVariables[HASH_TABLE_SIZE] = {false}; // Hashtable to check if variables were declared
+    bool usedVariables[HASH_TABLE_SIZE] = {false}; // Hashtable to check if variables were used
+
+    char* variableNames[HASH_TABLE_SIZE] = {NULL}; // Array to store variable names
+    char* expressionTable[EXPR_TABLE_SIZE] = {NULL}; // Array to store expressions
+
+    symbol_table *current_table = NULL; // Pointer to the current (top) symbol table in the stack
+    function_stack_node** functionsStack = NULL; // Pointer to the top of the functions stack
+    function_stack_node** temporaryStack = NULL; // Pointer to a temporary stack (used in stack operations)
+
+    node *root;  // Root of the abstract syntax tree
+
+    // Creates a new syntax tree node with given token, left and right children
     node* createNode(char* token, node *left, node *right);
-    void printTree (node *tree);
-    void indent(int n);
-    int yylex();
-    int yyerror(const char *fmt, ...);
-    symbol_table *current_table = NULL; // this points to the top of the stack
-    function_stack_node** functionsStack = NULL;
-    char* peek(function_stack_node* stack);
 
-    int labelCounter = 0;  // For generating unique labels
-    int tempVarCounter = 0;  // For generating unique temporary variables
+    // Creates a new symbol table
+    symbol_table* createSymbolTable();
 
-    int printlevel=0;
-    node *root;
+    // Returns the depth of the current symbol table
+    int getSymbolTableDepth();
 
-    symbol_table* createSymbolTable()
-    {
-        symbol_table *table = (symbol_table*) malloc(sizeof(symbol_table));
-        if (table == NULL)
-        {
-            fprintf(stderr, "Error: Unable to allocate memory for symbol table\n");
-            return NULL;
-        }
-        table->head = NULL;
-        table->prev = NULL;
-        return table;
-    }
+    // Prints the given symbol table
+    void printSymbolTable(symbol_table* table);
 
-    int getSymbolTableDepth()
-    {
-        int depth = 0;
-        symbol_table *table = current_table;
-        while (table != NULL)
-        {
-            depth++;
-            table = table->prev;
-        }
-        return depth;
-    }
+    // Pushes the given symbol table onto the symbol table stack
+    void pushSymbolTable(symbol_table *table);
 
-    void printSymbolTable(symbol_table* table)
-    {
-        printf("Symbol Table:\n");
-        printf("+----------------------+----------------------+----------------------+\n");
-        printf("|        Name          |        Type          |   Return Type (Fn)   |\n");
-        printf("+----------------------+----------------------+----------------------+\n");
+    // Pops the topmost symbol table from the symbol table stack
+    void popSymbolTable();
 
-        symbol_table_entry* entry = table->head;
-        while (entry != NULL)
-        {
-            if (strcmp(entry->type, "function") == 0) {
-                printf("| %-20s | %-20s | %-20s |\n", entry->name, entry->type, entry->return_type != NULL ? entry->return_type : "N/A");
-            } else {
-                printf("| %-20s | %-20s | %-20s |\n", entry->name, entry->type, "N/A");
-            }
-            // Print a separator between entries
-            printf("+----------------------+----------------------+----------------------+\n");
+    // Looks up a symbol in the current scope's symbol table
+    symbol_table_entry* lookupSymbolTableInCurrentScope(char *name);
 
-            entry = entry->next;
-        }
-    }
+    // Looks up a symbol in all scopes' symbol tables, starting from the current scope
+    symbol_table_entry* lookupSymbolTable(char *name);
 
-    void pushSymbolTable(symbol_table *table)
-    {
-        table->prev = current_table;
-        current_table = table;
-    }
+    // Adds a new entry to the symbol table
+    int addSymbolTableEntry(char *name, char *type);
 
+    // Sets the return type of a given function in the symbol table
+    void setFunctionReturnType(char *functionName, char *returnType);
 
-    void popSymbolTable()
-    {
-        symbol_table *table = current_table;
-        current_table = current_table->prev;
+    // Returns the return type of a given function
+    char* getFunctionReturnType(char *functionName);
 
-        symbol_table_entry* entry = table->head;
-        while (entry != NULL)
-        {
-            symbol_table_entry* next = entry->next;
-            free(entry->name);
-            free(entry->type);
-            free(entry);
-            entry = next;
-        }
+    // Adds an argument to a function in the symbol table
+    void addArgumentToFunction(char *functionName, char *argumentName, char *argumentType);
 
-        free(table);
-    }
+    // Processes a list of identifiers (used when declaring variables or function arguments)
+    void processIdentifiers(node* idList, char* argumentType);
 
+    // Counts the number of arguments for a given symbol table entry
+    int countArguments(symbol_table_entry *entry);
 
-    symbol_table_entry* lookupSymbolTableInCurrentScope(char *name)
-    {
+    // Counts the number of nodes in a syntax tree
+    int countNodes(node *n);
 
-        if (current_table == NULL) {
-            return NULL;
-        }
-        symbol_table_entry *entry = current_table->head;
-        while (entry != NULL)
-        {
-            if (strcmp(entry->name, name) == 0)
-                return entry;
-            entry = entry->next;
-        }
-        return NULL;
-    }
+    // Checks if a string is a numeric literal
+    int isNumericLiteral(const char* str);
 
-    symbol_table_entry* lookupSymbolTable(char *name)
-    {
-        symbol_table *table = current_table;
-        while (table != NULL)
-        {
-            symbol_table_entry *entry = table->head;
-            while (entry != NULL)
-            {
-                if (strcmp(entry->name, name) == 0)
-                    return entry;
-                entry = entry->next;
-            }
-            table = table->prev;
-        }
-        return NULL;
-    }
+    // Checks if a string is a character literal
+    int isCharLiteral(const char* str);
 
-    int addSymbolTableEntry(char *name, char *type)
-    {
-        /* Check if the name already exists in the current scope */
-        symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope(name);
-        if (existingEntry != NULL) {
-            fprintf(stderr, "Error: Name %s is already declared in the current scope\n", name);
-            return -1;
-        }
+    // Checks if a string is a string literal
+    int isStringLiteral(const char* str);
 
-        /* If name does not exist in current scope, add it */
-        symbol_table_entry *entry = (symbol_table_entry*) malloc(sizeof(symbol_table_entry));
-        if (entry == NULL)
-        {
-            fprintf(stderr, "Error: Unable to allocate memory for symbol table entry\n");
-            return -1;
-        }
+    // Checks if a string is a real (floating point) literal
+    int isRealLiteral(const char* str);
 
-        entry->name = strdup(name);
-        entry->type = strdup(type);
-        entry->next = current_table->head;
-        current_table->head = entry;
-        entry->hasReturnStatement = 0;
+    // Checks if a string is a unary operator
+    int isUnaryOperator(const char* token);
 
-        printf("Added symbol to table. Current table:\n");
-        printSymbolTable(current_table);
+    // Checks the types of the operands in a binary operation, returns the resulting type
+    char* checkBinaryOperationType(node *left, node *right, char *operation);
 
-        return 0;
-    }
+    // Checks the type of the operand in a unary operation, returns the resulting type
+    char* checkUnaryOperationType(node *operand, char *operation);
 
-    void setFunctionReturnType(char *functionName, char *returnType) {
+    // Checks if a string is an operator
+    bool isOperator(char* token);
 
-        /* Retrieve the function's entry from the symbol table */
-        symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
-
-        if (functionEntry == NULL) {
-            fprintf(stderr, "Error: Function not found in the symbol table\n");
-            return;
-        }
-        /* Set the return type */
-        functionEntry->return_type = strdup(returnType);
-
-    }
-
-    char* getFunctionReturnType(char *functionName) {
-        /* Find the function in the symbol table */
-        symbol_table_entry *entry = lookupSymbolTable(functionName);
-
-        /* If the function does not exist in the symbol table, return NULL */
-        if (entry == NULL) {
-            fprintf(stderr, "Error: Function %s is not declared in any scope\n", functionName);
-            return NULL;
-        }
-
-        /* If the function exists but its type is not 'function', return NULL */
-        if (strcmp(entry->type, "function") != 0) {
-            fprintf(stderr, "Error: %s is not a function\n", functionName);
-            return NULL;
-        }
-
-        /* If the function exists and its type is 'function', return its return type */
-        return entry->return_type;
-    }
-
-    void addArgumentToFunction(char *functionName, char *argumentName, char *argumentType) {
-        /* Retrieve the function's entry from the symbol table */
-        symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
-        if (functionEntry == NULL) {
-            fprintf(stderr, "Error: Function not found in the symbol table\n");
-            return;
-        }
-
-        /* Create a new argument entry */
-        argument_entry *newArgument = (argument_entry*) malloc(sizeof(argument_entry));
-        if (newArgument == NULL) {
-            fprintf(stderr ,"Error: Unable to allocate memory for argument entry");
-            return;
-        }
-
-        newArgument->name = strdup(argumentName);
-        newArgument->type = strdup(argumentType);
-        newArgument->next = NULL;
-
-        /* Prepend the new argument to the function's argument list */
-        if (functionEntry->arguments == NULL) {
-            functionEntry->arguments = newArgument;
-        } else {
-            argument_entry *arg = functionEntry->arguments;
-            while (arg->next != NULL) {
-                arg = arg->next;
-            }
-            arg->next = newArgument;
-        }
-    }
-
-    void processIdentifiers(node* idList, char* argumentType) {
-        if (idList == NULL) {
-            return;
-        }
-        processIdentifiers(idList->right, argumentType);
-
-        // check if identifier is already in the symbol table
-        symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope(idList->token);
-        if (existingEntry != NULL) {
-            yyerror("Error: Identifier with this name is already declared in the current scope");
-            return;
-        }
-
-        // add identifier to the symbol table
-        addSymbolTableEntry(idList->token, argumentType);
-        addArgumentToFunction(peek(*functionsStack), idList->token, argumentType);
-    }
-
-    int countArguments(symbol_table_entry *entry) {
-        int count = 0;
-        argument_entry *arg = entry->arguments;
-        while(arg != NULL) {
-            count++;
-            arg = arg->next;
-        }
-        return count;
-    }
-
-    /*
-    Tree structure needs fixing for generating arguments. this function works in the
-    messed up structure, nesting is causing the problem.
-    */
-    int countNodes(node *n) {
-        int count = 0;
-        while (n != NULL) {
-            if (strcmp(n->token, "argument") == 0) {
-                // Increment count for each argument node
-                count++;
-
-                // Move to the next argument (right child)
-                n = n->right;
-            }
-        }
-        return count;
-    }
-
-    int isNumericLiteral(const char* str) {
-        // iterate over the string
-        for(int i = 0; str[i] != '\0'; i++) {
-            // if a character is not a digit, return false
-            if (!isdigit(str[i])) {
-                return 0;
-            }
-        }
-
-        // if all characters were digits, return true
-        return 1;
-    }
-
-    int isCharLiteral(const char* str) {
-        // a char literal is usually enclosed in single quotes (like 'a') so we expect the string to be 3 characters long
-        // str[0] should be a single quote, str[1] any character and str[2] a single quote again
-        if (strlen(str) == 3 && str[0] == '\'' && str[2] == '\'') {
-            return 1;
-        }
-
-        // if the string does not match this pattern, it is not a char literal
-        return 0;
-    }
-
-    int isStringLiteral(const char* str) {
-        // A string literal is usually enclosed in double quotes (like "foo")
-        // so we expect the string to be at least 2 characters long.
-        // str[0] should be a double quote and str[strlen(str) - 1] should be a double quote again
-        int len = strlen(str);
-        if (len >= 2 && str[0] == '\"' && str[len - 1] == '\"') {
-            return 1;
-        }
-
-        // If the string does not match this pattern, it is not a string literal
-        return 0;
-    }
-
-    int isRealLiteral(const char* str) {
-        char* endptr;
-        strtod(str, &endptr);
-
-        // If the endptr points to the end of the string, and the string is not empty,
-        // then the entire string was successfully converted to a double.
-        return *endptr == '\0' && str != endptr && *str != '\0';
-    }
-
-    int isUnaryOperator(const char* token) {
-        // Currently only support address-of operator
-        return strcmp(token, "&") == 0 || strcmp(token, "*") == 0 || strcmp(token, "ARRAY_ELEMENT") == 0;
-    }
-
+    // Returns the type of a syntax tree node
     char* getNodeType(node *n);
 
-    char* checkBinaryOperationType(node *left, node *right, char *operation) {
-        char* leftType = getNodeType(left);
-        char* rightType = getNodeType(right);
-        if (leftType == NULL || rightType == NULL) {
-            return NULL;
-        }
-        // Handle arithmetic operations
-        if (strcmp(operation, "+") == 0 || strcmp(operation, "-") == 0 ||
-            strcmp(operation, "*") == 0 || strcmp(operation, "/") == 0) {
-            if((strcmp(leftType, "int") == 0 || strcmp(leftType, "real") == 0) &&
-            (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {
-                if (strcmp(leftType, "int") == 0 && strcmp(rightType, "int") == 0) {
-                    return "int";
-                } else {
-                    return "real";
-                }
-            } else {
-                char errorMsg[256];
-                sprintf(errorMsg, "Error: Invalid types for operation '%s'. Operands must be int or real. Left operand is '%s', right operand is '%s'",operation, leftType, rightType);
-                yyerror(errorMsg);
-                return NULL;
-            }
-        }
+    // Returns the type of an expression syntax tree
+    char* getTypeOfExpression(node* expr);
 
-        // Handle logical operations
-        if (strcmp(operation, "&&") == 0 || strcmp(operation, "||") == 0) {
-            if (strcmp(leftType, "bool") == 0 && strcmp(rightType, "bool") == 0) {
-                return "bool";
-            } else {
-                char errorMessage[100];
-                sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type bool, but got '%s' and '%s'", leftType, rightType);
-                yyerror(errorMessage);
-                return NULL;
-            }
-        }
+    // Reverses a syntax tree
+    node* reverseTree(node* root);
 
-        // Handle comparison operations
-        if (strcmp(operation, ">") == 0 || strcmp(operation, "<") == 0 ||
-            strcmp(operation, "<=") == 0 || strcmp(operation, ">=") == 0) {
-            if ((strcmp(leftType, "int") == 0 || strcmp(leftType, "real") == 0) &&
-                (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {
-                return "bool";
-            } else {
-                char errorMessage[100];
-                sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type int or real, but got '%s' and '%s'", leftType, rightType);
-                yyerror(errorMessage);
-                return NULL;
-            }
-        }
+    // Prints the contents of a function stack
+    void printStack(function_stack_node* stack);
 
-        // Handle equality/inequality operations
-        if (strcmp(operation, "==") == 0 || strcmp(operation, "!=") == 0) {
-            if (strcmp(leftType, rightType) == 0) {
-                return "bool";
-            } else {
-                // Handle the case of comparing a pointer with a non-pointer
-                if ((leftType[0] == '*' && strcmp(leftType, rightType + 1) == 0) ||
-                    (rightType[strlen(rightType) - 1] == '*' && strcmp(rightType, leftType + 1) == 0)) {
-                    return "bool";
-                }
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of the same type or compatible pointer types, but got '%s' and '%s'", leftType, rightType);
-                yyerror(errorMessage);
-                return NULL;
-            }
-        }
+    // Pushes a function name onto a function stack
+    void push(function_stack_node** stack, char* function_name);
 
-        // Handle array indexing
-        if (strcmp(operation, "array_index") == 0) {
-            if (strcmp(leftType, "string") == 0 && strcmp(rightType, "int") == 0) {
-                return "char";
-            } else {
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Invalid types for array indexing. Left operand must be of type string and right operand must be of type int, but got '%s' and '%s'", leftType, rightType);
-                yyerror(errorMessage);
-                return NULL;
-            }
-        }
+    // Pops the top function from a function stack and returns its name
+    char* pop(function_stack_node** stack);
 
+    // Returns the name of the top function on a function stack without popping it
+    char* peek(function_stack_node* stack);
 
-        // Catch-all for unsupported operations
-        yyerror("Error: Unsupported operation: %s", operation);
-        return NULL;
-    }
+    // Computes the hash of a string
+    unsigned long hash(char* str);
 
-    char* checkUnaryOperationType(node *operand, char *operation) {
-        symbol_table_entry *entry = lookupSymbolTable(operand->token);
-        if (entry == NULL) {
-            char errorMessage[150];
-            sprintf(errorMessage, "Error: Undefined variable: %s\n", operand->token);
-            yyerror(errorMessage);
-            return NULL;
-        }
-        if (strcmp(operation, "!") == 0 && strcmp(entry->type, "bool") != 0) {
-            char errorMessage[150];
-            sprintf(errorMessage, "Error: Invalid type for operation '!'. Operand must be of type bool, but got %s\n", entry->type);
-            yyerror(errorMessage);
-            return NULL;
-        }
-        if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "int") == 0 || strcmp(entry->type, "real") == 0)) {
-            char errorMessage[150];
-            sprintf(errorMessage, "Error: Invalid type for operation 'abs'. Operand must be of type int or real, but got %s\n", entry->type);
-            yyerror(errorMessage);
-            return NULL;
-        }
-        if (strcmp(operation, "&") == 0) {
-            char* type = malloc(strlen(entry->type) + 2); // Allow space for '*' and '\0'
-            strcpy(type, entry->type);
-            strcat(type, "*");
-            return type;
-        }
-        // Handle dereference operation
-        if (strcmp(operation, "*") == 0) {
-            if (entry->type[strlen(entry->type) - 1] != '*') {
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Invalid type for dereference operation. Operand must be of pointer type, but got %s\n", entry->type);
-                yyerror(errorMessage);
-                    return NULL;
-            }
-            // remove the last character (*) to get the dereferenced type
-            char *dereferenced_type = strdup(entry->type);
-            dereferenced_type[strlen(dereferenced_type) - 1] = '\0';
-            return dereferenced_type;
-        }
-        return entry->type;
-    }
+    // Marks a function as called
+    void addCalledFunction(char* functionName);
 
-    /* A helper function to check whether a token is an operator */
-    bool isOperator(char* token) {
-        char* operators[] = {"&&", "||", "==", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "!", "abs"};
-        int num_operators = sizeof(operators) / sizeof(operators[0]);
+    // Checks if a function was called
+    bool isFunctionCalled(char* functionName);
 
-        for (int i = 0; i < num_operators; i++) {
-            if (strcmp(token, operators[i]) == 0) {
-                return true;
-            }
-        }
+    // Gathers all called functions from a syntax tree
+    void gatherCalledFunctions(node* root);
 
-        return false;
-    }
+    // Marks a variable as declared
+    void addDeclaredVariable(char* varName);
 
-    char* getNodeType(node *n) {
-        if (n == NULL) {
-            yyerror("Null node in getNodeType");
-            return NULL;
-        }
-        if (n->left == NULL && n->right == NULL) { // Identifier or literal
-            if (isOperator(n->token)) {
-                return NULL; // Operators don't have a type in the same sense as variables or literals
-            }
-            if (isNumericLiteral(n->token)) {
-                return "int";
-            }
-            if (isCharLiteral(n->token)) {
-                return "char";
-            }
-            if (strcmp(n->token, "true") == 0 || strcmp(n->token, "false") == 0) {
-                return "bool";
-            }
-            if (isStringLiteral(n->token)) {
-                return "string";
-            }
-            if (isRealLiteral(n->token)) {
-                return "real";
-            }
-            symbol_table_entry* entry = lookupSymbolTable(n->token);
-            if (entry == NULL) {
-                yyerror("Undeclared identifier: %s", n->token);
-                return NULL;
-            }
-            return entry->type;
-        }
-        else if (n->right == NULL) { // Unary operation
-            if (!isUnaryOperator(n->token)) {
-                yyerror("Unexpected operator in unary operation");
-                return NULL;
-            }
-            return checkUnaryOperationType(n->left, n->token);
-        }
-        else { // Binary operation
-            if (n->left == NULL || n->right == NULL) {
-                yyerror("Missing operand in binary operation");
-                return NULL;
-            }
-            char* leftType = getNodeType(n->left);
-            char* rightType = getNodeType(n->right);
+    // Marks a variable as used
+    void useVariable(char* varName);
 
-            if (leftType == NULL || rightType == NULL) {
-                return NULL; // Error would have been printed already
-            }
+    // Prints the contents of the hash tables
+    void printHashTable();
 
-            // Check the type compatibility of operands with the operation
-            return checkBinaryOperationType(n->left, n->right, n->token);
-        }
+    // Checks if a piece of code is dead code
+    bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root);
 
-        return NULL; // For nodes representing operations, there is no type at this level.
-    }
+    // Checks if a string is an operator (version 2)
+    int isOperator2(char* token);
 
-    char* getTypeOfExpression(node* expr) {
-        if (expr == NULL) {
-            return NULL;
-        }
+    // Computes the hash of an expression
+    unsigned int hashExpression(char* expr);
 
-        /* If it's a binary operation, check the types of both operands */
-        if (expr->left && expr->right) {
-            // Check if it's array access operation
-            if(strcmp(expr->token, "ARRAY_ELEMENT") == 0) {
-                char* leftType = getNodeType(expr->left); // This should be the array identifier
-                char* rightType = getNodeType(expr->right); // This should be the index
-                if (leftType == NULL || rightType == NULL) {
-                    return NULL; // Error message would have been printed already
-                }
+    // Prints indentation spaces
+    void indent(int n);
 
-                if (strcmp(leftType, "string") != 0 || strcmp(rightType, "int") != 0) {
-                    yyerror("Invalid array access: array type is %s and index type is %s", leftType, rightType);
-                    return NULL;
-                }
+    // Prints a syntax tree
+    void printTree(node *tree);
 
-                return "char*"; // The type of an element in a string array is "char"
-            }
-            else {
-                // For other binary operations, proceed as before
-                char* leftType = getNodeType(expr->left);
-                char* rightType = getNodeType(expr->right);
+    // Prints the three-address code of a syntax tree
+    void printThreeAddressCode(node *tree, int indentLevel);
 
-                if (leftType == NULL || rightType == NULL) {
-                    return NULL; // Error message would have been printed already
-                }
+    // Frees the memory occupied by a syntax tree node
+    void freeNode(node* n);
 
-                if (strcmp(leftType, rightType) != 0) {
-                    yyerror("Type mismatch in binary operation: %s %s", leftType, rightType);
-                    return NULL;
-                }
-                // The type of the operation is dependent on the operator
-                if (strcmp(expr->token, "<") == 0 || strcmp(expr->token, ">") == 0 ||
-                    strcmp(expr->token, "==") == 0 || strcmp(expr->token, "!=") == 0 ||
-                    strcmp(expr->token, ">=") == 0 || strcmp(expr->token, "<=") == 0) {
-                    return "bool";
-                }
-                return leftType; // for arithmetic operations, the type of the operation is the same as the operands
-            }
-        }
-        /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
-        else {
-            if (expr->token[0] == '&') {
-                if(strcmp(expr->left->token, "ARRAY_ELEMENT") == 0) {
-                    symbol_table_entry* entry = lookupSymbolTable(expr->left->left->token);
-                    if (entry == NULL || strcmp(entry->type, "string") != 0) {
-                        yyerror("Variable not defined or not a string array");
-                        return NULL;
-                    }
-                    return "char*";
-                } else {
-                    symbol_table_entry* entry = lookupSymbolTable(expr->left->token);
-                    if (entry == NULL) {
-                        yyerror("Variable not defined");
-                        return NULL;
-                    }
-                    char *pointer_type = malloc(strlen(entry->type) + 2);
-                    strcpy(pointer_type, entry->type);
-                    strcat(pointer_type, "*");
+    // Performs a binary operation on two values
+    double performOperation(char* op, double leftVal, double rightVal);
 
-                    return pointer_type;
-                }
-            } else if (expr->token[0] == '*') {
-                    symbol_table_entry* entry = lookupSymbolTable(expr->token + 1);
-                    if (entry == NULL || strlen(entry->type) < 2 || entry->type[strlen(entry->type) - 1] != '*') {
-                        yyerror("Variable not defined or not a pointer");
-                        return NULL;
-                    }
+    // Converts a numeric result to a string
+    char* convertResultToString(double result);
 
-                    // remove the last character (*) to get the dereferenced type
-                    char *dereferenced_type = strdup(entry->type);
-                    dereferenced_type[strlen(dereferenced_type) - 1] = '\0';
-                    return dereferenced_type;
-            } else {
-                return getNodeType(expr);
-            }
-        }
-    }
+    // Updates the token of the root node of a syntax tree
+    void updateRootNode(node* root, char* resultStr);
 
-    node* reverseTree(node* root)
-    {
-        if(root == NULL || root->right == NULL)
-        {
-            return root;
-        }
+    // Performs constant folding optimization on a syntax tree
+    node* constantFoldingOptimization(node* root);
 
-        node* newRoot = reverseTree(root->right);
+    // Lexer function, returns the next token from the input
+    int yylex();
 
-        root->right->right = root;
-        root->right = NULL;
-
-        return newRoot;
-    }
-
-    void printStack(function_stack_node* stack)
-    {
-        if (stack == NULL) {
-            printf("Function stack is empty.\n");
-            return;
-        }
-
-        printf("Function stack:\n");
-
-        function_stack_node* current_node = stack;
-        while (current_node != NULL) {
-            printf("%s\n", current_node->function_name);
-            current_node = current_node->next;
-        }
-    }
-
-
-    void push(function_stack_node** stack, char* function_name)
-    {
-        function_stack_node* new_node = malloc(sizeof(function_stack_node));
-        new_node->function_name = strdup(function_name);
-        new_node->next = *stack;
-        *stack = new_node;
-    }
-
-    char* pop(function_stack_node** stack)
-    {
-        if (*stack == NULL) {
-            return NULL;
-        }
-
-        function_stack_node* top_node = *stack;
-        char* function_name = top_node->function_name;
-        *stack = top_node->next;
-        free(top_node);
-
-        return function_name;
-    }
-
-    char* peek(function_stack_node* stack)
-    {
-        if (stack == NULL) {
-            return NULL;
-        }
-
-        return stack->function_name;
-    }
-
-
+    // Error handling function, prints an error message and exits the program
+    int yyerror(const char *fmt, ...);
 
 %}
 
@@ -713,32 +227,48 @@
     char *string;
 }
 
-
-%token <string> DIVISION PLUS MINUS MULTI IDENTIFIER
+// Token definitions for operators
+%token <string> DIVISION PLUS MINUS MULTI
 %token <string> AND OR EQUALS INCREMENT
+
+// Token definitions for literals
 %token <string> INT_LITERAL CHAR_LITERAL STRING_LITERAL BOOL_LITERAL REAL_LITERAL
+
+// Token definitions for data types
 %token <string> BOOL CHAR INT REAL STRING VOID
-%token <string> VAR ASSIGNMENT SEMICOLON COLON ARROW COMMA PIPE LBRACKET RBRACKET
+
+// Token definitions for variable handling and assignment
+%token <string> VAR IDENTIFIER ASSIGNMENT SEMICOLON COLON ARROW COMMA PIPE LBRACKET RBRACKET
+
+// Token definitions for function-related keywords
 %token <string> FUNCTION MAIN RETURN
+
+// Token definitions for pointer-related keywords
 %token <string> NULL_PTR POINTER_TYPE ADDRESS
+
+// Token definitions for control flow structures
 %token <string> IF ELSE WHILE DO FOR
+
+// Token definitions for comparison operators
 %token <string> GT GTE LT LTE NOT NEQ
 
+// Token definitions for parentheses and braces
 %token LPAREN RPAREN LBRACE RBRACE
 
+// Definitions for nonterminal symbols, specifying what type of value they will hold
 %type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
-%type <node> program return_type
+%type <node> program return_type relational assignment single_statement
 %type <node> code_block if_statement while_statement do_while_statement for_statement factor term unary atom
 
-%left OR
-%left AND
-%left NEQ EQUALS
-%left LT GT LTE GTE
-%left PLUS MINUS
-%left MULTI DIVISION
+// Operator precedence, from highest to lowest
 %right ASSIGNMENT
-
+%left MULTI DIVISION
+%left PLUS MINUS
+%left LT GT LTE GTE
+%left NEQ EQUALS
+%left AND
+%left OR
 %nonassoc NOT
 
 %%
@@ -747,6 +277,9 @@
 program:
     subroutines main {
         root = createNode("program", $1, $2);
+            if (!isDeadCode(current_table, *temporaryStack, root)) {
+                printf("There is no dead code in the program.\n");
+            }
             printTree(root);
     }
     ;
@@ -764,7 +297,9 @@ subroutine:
             /* Check if a function with the same name is already declared in the current scope */
             symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
             if (existingEntry != NULL) {
-                yyerror("Error: Function with this name is already declared in the current scope");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' is already declared in the current scope", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -773,6 +308,7 @@ subroutine:
 
             /* Push the function name onto the functionsStack */
             push(functionsStack, strdup($2));
+            push(temporaryStack, strdup($2));
 
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -787,11 +323,10 @@ subroutine:
             addSymbolTableEntry($2, "function");
 
             setFunctionReturnType(peek(*functionsStack), $6->token);
+
         }
     LBRACE statements_list
         {
-            char *functionReturnType = getFunctionReturnType(peek(*functionsStack));
-
             /* When we're done with the function, we exit its scope,
             so we pop its symbol table off the stack. */
             popSymbolTable();
@@ -808,7 +343,9 @@ subroutine:
             /* Check if a function with the same name is already declared in the current scope */
             symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope($2);
             if (existingEntry != NULL) {
-                yyerror("Error: Function with this name is already declared in the current scope");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' is already declared in the current scope", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -817,6 +354,7 @@ subroutine:
 
             /* Push the function name onto the functionsStack */
             push(functionsStack, strdup($2));
+            push(temporaryStack, strdup($2));
 
             /* When we start a new function, we enter a new scope.
             So we create a new symbol table and push it onto the stack. */
@@ -830,7 +368,6 @@ subroutine:
     arguments RPAREN COLON return_type
         {
             /* Extract the return type */
-
             setFunctionReturnType(peek(*functionsStack), $8->token);
 
         }
@@ -839,7 +376,9 @@ subroutine:
             /* Retrieve the function's entry from the symbol table */
             symbol_table_entry *functionEntry = lookupSymbolTable(peek(*functionsStack));
             if (functionEntry == NULL) {
-                yyerror("Error: Function not found in the symbol table");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' not found in the symbol table", peek(*functionsStack));
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -847,7 +386,9 @@ subroutine:
             char *functionReturnType = getFunctionReturnType(peek(*functionsStack));
 
             if(strcmp(functionReturnType, "void") != 0 && functionEntry->hasReturnStatement == 0) {
-                yyerror("Error: Function must have a return statement");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' must have a return statement", peek(*functionsStack));
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -921,7 +462,18 @@ arguments_list:
 
 /* Used to parse individual arguments. */
 argument:
-    IDENTIFIER ARROW identifiers_list COLON type
+    IDENTIFIER ARROW identifiers_list COLON POINTER_TYPE
+        {
+            /* Add argument to symbol table */
+            char *argumentName = $1;
+            char *argumentType = $5;
+
+            // Process identifiers_list
+            processIdentifiers($3, argumentType);
+
+            $$ = createNode("argument", createNode(argumentType, NULL, NULL), $3);
+        }
+    | IDENTIFIER ARROW identifiers_list COLON type
         {
             /* Add argument to symbol table */
             char *argumentName = $1;
@@ -940,7 +492,6 @@ identifiers_list:
     | IDENTIFIER COMMA identifiers_list { $$ = createNode(strdup($1), NULL, $3); }
 ;
 
-
 /* Used to parse lists of statements. */
 statements_list:
     statement  { $$ = createNode("statements", $1, NULL); }
@@ -949,7 +500,7 @@ statements_list:
 
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
-statement:
+single_statement:
      VAR identifiers_list COLON POINTER_TYPE SEMICOLON
         {
             $$ = createNode("declare_pointer", $2, createNode($4, NULL, NULL));
@@ -959,7 +510,9 @@ statement:
                 char *type = malloc(strlen($4) + 2);
                 strcat(type, $4);
                 if (addSymbolTableEntry(id_node->token, type) == -1) {
-                    yyerror("Variable redeclaration or memory allocation error");
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Variable '%s' redeclaration or memory allocation error.", id_node->token);
+                    yyerror(errorMessage);
                     YYABORT;
                 }
                 id_node = id_node->left;
@@ -974,41 +527,31 @@ statement:
             node* id_node = $2;
             while(id_node != NULL) {
                 if (addSymbolTableEntry(id_node->token, $4->token) == -1) {
-                    yyerror("Variable redeclaration or memory allocation error");
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Variable '%s' redeclaration or memory allocation error.", id_node->token);
+                    yyerror(errorMessage);
                     YYABORT;
                 }
+                // Add variable to declared list
+                addDeclaredVariable(id_node->token);
                 id_node = id_node->right;
             }
-        }
-    | IDENTIFIER ASSIGNMENT function_call SEMICOLON
-        {
-            // Check if variable has been declared
-            symbol_table_entry* entry = lookupSymbolTable($1);
-            if (entry == NULL) {
-                yyerror("Variable not defined");
-                YYABORT;
-            }
-
-            // /* Get the return type of the function call */
-            // char* returnType = getReturnTypeOfFunctionCall($3);
-
-            // /* Compare the expected return type with the actual return type */
-            // if (strcmp(entry->type, returnType) != 0) {
-            //     yyerror("Type mismatch in assignment. Expected: %s, Found: %s", entry->type, returnType);
-            //     YYABORT;
-            // }
-
-            $$ = createNode("=", createNode($1, NULL, NULL), $3);
         }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         {
             $$ = createNode("=", createNode($1, NULL, NULL), $3);
+
             // Check if variable has been declared
             symbol_table_entry* entry = lookupSymbolTable($1);
             if (entry == NULL) {
-                yyerror("Variable not defined");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' not defined.", $1);
+                yyerror(errorMessage);
                 YYABORT;
             }
+
+            // Mark variable as used
+            useVariable($1);
 
             // Check if the type of the expression matches the type of the variable
             char* expression_type = getTypeOfExpression($3);
@@ -1016,9 +559,32 @@ statement:
                 // An error message would have been printed by getTypeOfExpression
                 YYABORT;
             }
+
             if (strcmp(entry->type, expression_type) != 0) {
-                yyerror("Type mismatch in assignment. Expected: %s, Found: %s", entry->type, expression_type);
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, expression_type);
+                yyerror(errorMessage);
                 YYABORT;
+            }
+
+            // Check if expression is a function call and perform the necessary actions
+            if(strcmp($3->token, "call") == 0) {
+                // Retrieve the function's return type
+                char* functionReturnType = getFunctionReturnType($3->left->token);
+                if (functionReturnType == NULL) {
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Failed to retrieve return type for function '%s'.", $3->left->token);
+                    yyerror(errorMessage);
+                    YYABORT;
+                }
+
+                // Check if the return type of the function matches the type of the identifier
+                if (strcmp(entry->type, functionReturnType) != 0) {
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, functionReturnType);
+                    yyerror(errorMessage);
+                    YYABORT;
+                }
             }
         }
     | MULTI IDENTIFIER ASSIGNMENT expression SEMICOLON
@@ -1026,11 +592,15 @@ statement:
             // Check if variable has been declared
             symbol_table_entry* entry = lookupSymbolTable($2);
             if (entry == NULL) {
-                yyerror("Variable not defined");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' not defined.", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
             if (entry->type[strlen(entry->type) - 1] != '*') {
-                yyerror("Variable is not a pointer");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' is not a pointer.", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1046,7 +616,9 @@ statement:
                 YYABORT;
             }
             if (strcmp(pointed_type, expression_type) != 0) {
-                yyerror("Type mismatch in assignment. Expected: %s, Found: %s", pointed_type, expression_type);
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Type mismatch in assignment to pointer variable '%s'. Expected: '%s', Found: '%s'.", $2, pointed_type, expression_type);
+                yyerror(errorMessage);
                 free(pointed_type);
                 YYABORT;
             }
@@ -1061,14 +633,19 @@ statement:
                 yyerror("Error: Symbol table is not initialized\n");
                 YYABORT;
             }
+
             if ($1 == NULL || $2 == NULL) {
-                yyerror("Error: Null values provided\n");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Null values provided for declaration.");
+                yyerror(errorMessage);
                 YYABORT;
             }
 
             symbol_table_entry* entry = lookupSymbolTableInCurrentScope($2);
             if (entry != NULL) {
-                yyerror("Error: Variable %s already declared\n", $2);
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' already declared in current scope.", $2);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1084,7 +661,9 @@ statement:
             /* Retrieve the function's entry from the symbol table */
             symbol_table_entry *functionEntry = lookupSymbolTable(peek(*functionsStack));
             if (functionEntry == NULL) {
-                yyerror("Error: Function not found in the symbol table");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Function '%s' not found in the symbol table.", peek(*functionsStack));
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1107,7 +686,9 @@ statement:
 
             /* Compare the expected return type with the actual return type */
             if (strcmp(expectedReturnType, actualReturnType) != 0) {
-                yyerror("Error: Type mismatch in return statement");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Type mismatch in return statement for function '%s'. Expected '%s' but found '%s'.", currentFunction, expectedReturnType, actualReturnType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1121,12 +702,17 @@ statement:
             popSymbolTable(); // end the scope for the subroutine
         }
     | function_call SEMICOLON
+    ;
+
+statement:
+    single_statement
     | code_block
     | if_statement
     | while_statement
     | do_while_statement
     | for_statement
     ;
+
 
 
 /* non-terminal for a function call. */
@@ -1139,7 +725,9 @@ function_call:
                 YYABORT;
             }
             if (countArguments(existingEntry) != 0) {
-                yyerror("Error: Wrong number of arguments in function call");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Wrong number of arguments in function call for '%s'. Expected 0 but found %d.", $1, countArguments(existingEntry));
+                yyerror(errorMessage);
                 YYABORT;
             }
             $$ = createNode("call", createNode($1, NULL, NULL), NULL);
@@ -1153,7 +741,9 @@ function_call:
             }
             int numCallArgs = countNodes($3);
             if (countArguments(existingEntry) != numCallArgs) {
-                yyerror("Error: Wrong number of arguments in function call");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Wrong number of arguments in function call for '%s'. Expected %d but got %d.", $1, countArguments(existingEntry), numCallArgs);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1164,7 +754,9 @@ function_call:
 
             while (argument != NULL && callArgument != NULL) {
                 if (strcmp(argument->type, getTypeOfExpression(callArgument->left)) != 0) {
-                    yyerror("Error: Argument type mismatch in function call");
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Argument type mismatch in function call for '%s'. Expected type '%s' but got '%s'.", $1, argument->type, getTypeOfExpression(callArgument->left));
+                    yyerror(errorMessage);
                     YYABORT;
                 }
                 argument = argument->next;
@@ -1180,7 +772,6 @@ function_call_arguments:
     | function_call_arguments COMMA expression { $$ = createNode("argument", $3, $1); } // multiple arguments
 ;
 
-
 code_block:
     LBRACE // Beginning of a new code block
     {
@@ -1188,7 +779,7 @@ code_block:
         // This will hold all variables declared in the new scope
         pushSymbolTable(createSymbolTable());
     }
-    statements_list // Here's where your variable declarations would be
+    statements_list // variable declarations
     RBRACE // End of code block
     {
         // Create a block node and associate it with the statements within the block
@@ -1210,7 +801,9 @@ if_statement:
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of an if statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1235,7 +828,9 @@ if_statement:
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of an if statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1247,8 +842,53 @@ if_statement:
 
             popSymbolTable(); /* Pop the symbol table after exiting if block scope */
         }
-;
+    | IF LPAREN expression RPAREN single_statement ELSE single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
 
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            node* if_body_node = createNode("if_body", $5, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+
+            /* Push a new symbol table for else statement scope */
+            symbol_table *elseTable = createSymbolTable();
+            pushSymbolTable(elseTable);
+
+            node* else_body_node = createNode("else_body", $7, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting else block scope */
+
+            $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
+        }
+    | IF LPAREN expression RPAREN single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            $$ = createNode("if", $3, createNode("if_body", $5, NULL));
+
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+        }
+;
 
 /* Used to parse while loops. */
 while_statement:
@@ -1258,7 +898,9 @@ while_statement:
             char *expressionType = getTypeOfExpression($3);
 
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of a while statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1270,8 +912,27 @@ while_statement:
 
             popSymbolTable(); /* Pop the symbol table after exiting while loop scope */
         }
-;
+    | WHILE LPAREN expression RPAREN single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
 
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for while loop scope */
+            symbol_table *whileTable = createSymbolTable();
+            pushSymbolTable(whileTable);
+
+            $$ = createNode("while", $3, createNode("body", $5, NULL));
+
+            popSymbolTable(); /* Pop the symbol table after exiting while loop scope */
+        }
+;
 
 /* Used to parse do-while loops. */
 do_while_statement:
@@ -1281,7 +942,9 @@ do_while_statement:
             char *expressionType = getTypeOfExpression($7);
 
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of a do-while statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a do-while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1290,6 +953,26 @@ do_while_statement:
             pushSymbolTable(doWhileTable);
 
             $$ = createNode("do_while", $3, $7);
+
+            popSymbolTable(); /* Pop the symbol table after exiting do-while loop scope */
+        }
+    | DO single_statement WHILE LPAREN expression RPAREN SEMICOLON
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($5);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a do-while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for do-while loop scope */
+            symbol_table *doWhileTable = createSymbolTable();
+            pushSymbolTable(doWhileTable);
+
+            $$ = createNode("do_while", $2, $5);
 
             popSymbolTable(); /* Pop the symbol table after exiting do-while loop scope */
         }
@@ -1303,7 +986,9 @@ for_statement:
             char *expressionType = getTypeOfExpression($5);
 
             if (strcmp(expressionType, "bool") != 0) {
-                yyerror("Error: Condition of a for statement must be of type bool");
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a for statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
                 YYABORT;
             }
 
@@ -1327,63 +1012,100 @@ for_statement:
 
             popSymbolTable(); /* Pop the symbol table after exiting for loop scope */
         }
-    ;
+    | FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($5);
 
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a for statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for for loop scope */
+            symbol_table *forTable = createSymbolTable();
+            pushSymbolTable(forTable);
+
+            node* initialization = $3;
+            node* condition = $5;
+            node* increment = $7;
+            node* body = $9;
+
+            /* Build the nodes in stages */
+            node* initialization_node = createNode("for_initialization", initialization, NULL);
+            node* condition_node = createNode("for_condition", condition, NULL);
+            node* increment_node = createNode("for_increment", increment, NULL);
+            node* body_node = createNode("for_body", body, NULL);
+
+            /* Combine the four nodes into one */
+            $$ = createNode("for_statement",createNode("for_header",initialization_node,createNode("for_conditions",condition_node,increment_node)),body_node);
+
+            popSymbolTable(); /* Pop the symbol table after exiting for loop scope */
+        }
+;
 
 expression:
-    /* Logical and relational operations */
-    expression AND term {
+    /* Logical operations */
+    expression AND relational {
         if(checkBinaryOperationType($1, $3, "&&") == NULL)
             YYABORT;
         $$ = createNode("&&", $1, $3);
     }
-    | expression OR term {
+    | expression OR relational {
         if(checkBinaryOperationType($1, $3, "||") == NULL)
             YYABORT;
         $$ = createNode("||", $1, $3);
     }
-    | expression EQUALS term {
-        if(checkBinaryOperationType($1, $3, "==") == NULL)
-            YYABORT;
-        $$ = createNode("==", $1, $3);
-    }
-    | expression NEQ term {
-        if(checkBinaryOperationType($1, $3, "!=") == NULL)
-            YYABORT;
-        $$ = createNode("!=", $1, $3);
-    }
-    | expression LT term {
-        if(checkBinaryOperationType($1, $3, "<") == NULL)
-            YYABORT;
-        $$ = createNode("<", $1, $3);
-    }
-    | expression GT term {
-        if(checkBinaryOperationType($1, $3, ">") == NULL)
-            YYABORT;
-        $$ = createNode(">", $1, $3);
-    }
-    | expression LTE term {
-        if(checkBinaryOperationType($1, $3, "<=") == NULL)
-            YYABORT;
-        $$ = createNode("<=", $1, $3);
-    }
-    | expression GTE term {
-        if(checkBinaryOperationType($1, $3, ">=") == NULL)
-            YYABORT;
-        $$ = createNode(">=", $1, $3);
-    }
-    | IDENTIFIER ASSIGNMENT expression {
+    | assignment
+    | relational
+    | function_call
+    ;
+
+assignment:
+    IDENTIFIER ASSIGNMENT expression {
         symbol_table_entry* entry = lookupSymbolTable($1);
         if (entry == NULL) {
             yyerror("Undeclared identifier: %s", $1);
             YYABORT;
         }
-        char* exprType = getTypeOfExpression($3);
-        if(strcmp(exprType, entry->type) != 0) {
-            yyerror("Type mismatch in assignment");
-            YYABORT;
-        }
         $$ = createNode("=", createNode($1, NULL, NULL), $3);
+    }
+;
+
+
+relational:
+    /* Relational operations */
+    relational EQUALS term {
+        if(checkBinaryOperationType($1, $3, "==") == NULL)
+            YYABORT;
+        $$ = createNode("==", $1, $3);
+    }
+    | relational NEQ term {
+        if(checkBinaryOperationType($1, $3, "!=") == NULL)
+            YYABORT;
+        $$ = createNode("!=", $1, $3);
+    }
+    | relational LT term {
+        if(checkBinaryOperationType($1, $3, "<") == NULL)
+            YYABORT;
+        $$ = createNode("<", $1, $3);
+    }
+    | relational GT term {
+        if(checkBinaryOperationType($1, $3, ">") == NULL)
+            YYABORT;
+        $$ = createNode(">", $1, $3);
+    }
+    | relational LTE term {
+        if(checkBinaryOperationType($1, $3, "<=") == NULL)
+            YYABORT;
+        $$ = createNode("<=", $1, $3);
+    }
+    | relational GTE term {
+        if(checkBinaryOperationType($1, $3, ">=") == NULL)
+            YYABORT;
+        $$ = createNode(">=", $1, $3);
     }
     | term
     ;
@@ -1429,11 +1151,15 @@ unary:
     | PIPE expression PIPE {
         char* exprType = getTypeOfExpression($2);
         if (exprType == NULL) {
-            yyerror("Expression type error for 'abs' operation");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid expression type for 'abs' operation.\n");
+            yyerror(errorMessage);
             YYABORT;
         }
-        if(strcmp(exprType, "int") != 0 && strcmp(exprType, "real") != 0) {
-            yyerror("Invalid type for 'abs' operation. Operand must be of type int or real");
+        if(strcmp(exprType, "string") != 0) {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid type for 'abs' operation. Operand must be of type string, but got %s.\n", exprType);
+            yyerror(errorMessage);
             YYABORT;
         }
         $$ = createNode("abs", $2, NULL);
@@ -1442,21 +1168,26 @@ unary:
         // Check if variable has been declared
         symbol_table_entry* entry = lookupSymbolTable($2);
         if (entry == NULL) {
-            yyerror("Variable not defined");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Undefined variable: '%s'.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
         if (entry->type[strlen(entry->type) - 1] != '*') {
-            yyerror("Variable is not a pointer");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid operation on '%s'. It is not a pointer type.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
-
         $$ = createNode("*", createNode($2, NULL, NULL), NULL);
     }
     | MULTI LPAREN expression RPAREN {
         // Check if the expression is of a pointer type
         char* exprType = getTypeOfExpression($3);
         if (exprType == NULL || exprType[strlen(exprType) - 1] != '*') {
-            yyerror("Expression is not of pointer type for dereferencing operation");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid type for dereferencing operation. Operand must be of pointer type, but got %s.\n", exprType);
+            yyerror(errorMessage);
             YYABORT;
         }
         $$ = createNode("*", $3, NULL);
@@ -1486,6 +1217,9 @@ atom:
                 yyerror("Undeclared identifier: %s", $1);
                 YYABORT;
             }
+            // Mark variable as used
+            useVariable($1);
+
             $$ = createNode($1, NULL, NULL);
         }
     | INT_LITERAL { $$ = createNode($1, NULL, NULL); }
@@ -1507,11 +1241,15 @@ atom:
     | ADDRESS IDENTIFIER LBRACKET expression RBRACKET {
         symbol_table_entry* entry = lookupSymbolTable($2);
         if (entry == NULL) {
-            yyerror("Undeclared identifier: %s", $2);
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Undeclared identifier: '%s'.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
         if (strcmp(entry->type, "string") != 0) {
-            yyerror("Variable is not a string array");
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid operation on '%s'. It is not a string array.\n", $2);
+            yyerror(errorMessage);
             YYABORT;
         }
         $$ = createNode("ARRAY_ELEMENT", createNode($2, NULL, NULL), $4);
@@ -1534,14 +1272,6 @@ type:
 
 %%
 
-int isOperator2(char* token) {
-    // add more operators based on language here
-    if (strcmp(token, "+") == 0 || strcmp(token, "-") == 0 || strcmp(token, "*") == 0 || strcmp(token, "/") == 0) {
-        return 1;
-    }
-    return 0;
-}
-
 node* createNode(char* token, node *left, node *right) {
     node *newNode = (node*)malloc(sizeof(node));
     if (newNode == NULL) {
@@ -1562,6 +1292,781 @@ node* createNode(char* token, node *left, node *right) {
     return newNode;
 }
 
+symbol_table* createSymbolTable()
+{
+    symbol_table *table = (symbol_table*) malloc(sizeof(symbol_table));
+    if (table == NULL)
+    {
+        fprintf(stderr, "Error: Unable to allocate memory for symbol table\n");
+        return NULL;
+    }
+    table->head = NULL;
+    table->prev = NULL;
+    return table;
+}
+
+int getSymbolTableDepth()
+{
+    int depth = 0;
+    symbol_table *table = current_table;
+    while (table != NULL)
+    {
+        depth++;
+        table = table->prev;
+    }
+    return depth;
+}
+
+void printSymbolTable(symbol_table* table)
+{
+    printf("Symbol Table:\n");
+    printf("+----------------------+----------------------+----------------------+\n");
+    printf("|        Name          |        Type          |   Return Type (Fn)   |\n");
+    printf("+----------------------+----------------------+----------------------+\n");
+
+    symbol_table_entry* entry = table->head;
+    while (entry != NULL)
+    {
+        if (strcmp(entry->type, "function") == 0) {
+            printf("| %-20s | %-20s | %-20s |\n", entry->name, entry->type, entry->return_type != NULL ? entry->return_type : "N/A");
+        } else {
+            printf("| %-20s | %-20s | %-20s |\n", entry->name, entry->type, "N/A");
+        }
+        // Print a separator between entries
+        printf("+----------------------+----------------------+----------------------+\n");
+
+        entry = entry->next;
+    }
+}
+
+void pushSymbolTable(symbol_table *table)
+{
+    table->prev = current_table;
+    current_table = table;
+}
+
+void popSymbolTable()
+{
+    symbol_table *table = current_table;
+    current_table = current_table->prev;
+
+    symbol_table_entry* entry = table->head;
+    while (entry != NULL)
+    {
+        symbol_table_entry* next = entry->next;
+        free(entry->name);
+        free(entry->type);
+        free(entry);
+        entry = next;
+    }
+
+    free(table);
+}
+
+symbol_table_entry* lookupSymbolTableInCurrentScope(char *name)
+{
+
+    if (current_table == NULL) {
+        return NULL;
+    }
+    symbol_table_entry *entry = current_table->head;
+    while (entry != NULL)
+    {
+        if (strcmp(entry->name, name) == 0)
+            return entry;
+        entry = entry->next;
+    }
+    return NULL;
+}
+
+symbol_table_entry* lookupSymbolTable(char *name)
+{
+    symbol_table *table = current_table;
+    while (table != NULL)
+    {
+        symbol_table_entry *entry = table->head;
+        while (entry != NULL)
+        {
+            if (strcmp(entry->name, name) == 0)
+                return entry;
+            entry = entry->next;
+        }
+        table = table->prev;
+    }
+    return NULL;
+}
+
+int addSymbolTableEntry(char *name, char *type)
+{
+    /* Check if the name already exists in the current scope */
+    symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope(name);
+    if (existingEntry != NULL) {
+        fprintf(stderr, "Error: Name %s is already declared in the current scope\n", name);
+        return -1;
+    }
+
+    /* If name does not exist in current scope, add it */
+    symbol_table_entry *entry = (symbol_table_entry*) malloc(sizeof(symbol_table_entry));
+    if (entry == NULL)
+    {
+        fprintf(stderr, "Error: Unable to allocate memory for symbol table entry\n");
+        return -1;
+    }
+
+    entry->name = strdup(name);
+    entry->type = strdup(type);
+    entry->next = current_table->head;
+    current_table->head = entry;
+    entry->hasReturnStatement = 0;
+
+    printf("Added symbol to table. Current table:\n");
+    printSymbolTable(current_table);
+
+    return 0;
+}
+
+void setFunctionReturnType(char *functionName, char *returnType) {
+
+    /* Retrieve the function's entry from the symbol table */
+    symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
+
+    if (functionEntry == NULL) {
+        fprintf(stderr, "Error: Function not found in the symbol table\n");
+        return;
+    }
+    /* Set the return type */
+    functionEntry->return_type = strdup(returnType);
+
+}
+
+char* getFunctionReturnType(char *functionName) {
+    /* Find the function in the symbol table */
+    symbol_table_entry *entry = lookupSymbolTable(functionName);
+
+    /* If the function does not exist in the symbol table, return NULL */
+    if (entry == NULL) {
+        fprintf(stderr, "Error: Function %s is not declared in any scope\n", functionName);
+        return NULL;
+    }
+
+    /* If the function exists but its type is not 'function', return NULL */
+    if (strcmp(entry->type, "function") != 0) {
+        fprintf(stderr, "Error: %s is not a function\n", functionName);
+        return NULL;
+    }
+    /* If the function exists and its type is 'function', return its return type */
+    return entry->return_type;
+}
+
+void addArgumentToFunction(char *functionName, char *argumentName, char *argumentType) {
+    /* Retrieve the function's entry from the symbol table */
+    symbol_table_entry *functionEntry = lookupSymbolTable(functionName);
+    if (functionEntry == NULL) {
+        fprintf(stderr, "Error: Function not found in the symbol table\n");
+        return;
+    }
+
+    /* Create a new argument entry */
+    argument_entry *newArgument = (argument_entry*) malloc(sizeof(argument_entry));
+    if (newArgument == NULL) {
+        fprintf(stderr ,"Error: Unable to allocate memory for argument entry");
+        return;
+    }
+
+    newArgument->name = strdup(argumentName);
+    newArgument->type = strdup(argumentType);
+    newArgument->next = NULL;
+
+    /* Prepend the new argument to the function's argument list */
+    if (functionEntry->arguments == NULL) {
+        functionEntry->arguments = newArgument;
+    } else {
+        argument_entry *arg = functionEntry->arguments;
+        while (arg->next != NULL) {
+            arg = arg->next;
+        }
+        arg->next = newArgument;
+    }
+}
+
+void processIdentifiers(node* idList, char* argumentType) {
+    if (idList == NULL) {
+        return;
+    }
+    processIdentifiers(idList->right, argumentType);
+
+    // check if identifier is already in the symbol table
+    symbol_table_entry *existingEntry = lookupSymbolTableInCurrentScope(idList->token);
+    if (existingEntry != NULL) {
+        yyerror("Error: Identifier with this name is already declared in the current scope");
+        return;
+    }
+
+    // add identifier to the symbol table
+    addSymbolTableEntry(idList->token, argumentType);
+    addArgumentToFunction(peek(*functionsStack), idList->token, argumentType);
+}
+
+int countArguments(symbol_table_entry *entry) {
+    int count = 0;
+    argument_entry *arg = entry->arguments;
+    while(arg != NULL) {
+        count++;
+        arg = arg->next;
+    }
+    return count;
+}
+
+int countNodes(node *n) {
+    int count = 0;
+    while (n != NULL) {
+        if (strcmp(n->token, "argument") == 0) {
+            // Increment count for each argument node
+            count++;
+
+            // Move to the next argument (right child)
+            n = n->right;
+        }
+    }
+    return count;
+}
+
+int isNumericLiteral(const char* str) {
+    int start = 0;
+
+    // If the string starts with a '-', it could be a negative number
+    // So start checking from the second character
+    if (str[0] == '-') {
+        start = 1;
+    }
+
+    for(int i = start; str[i] != '\0'; i++) {
+        if (!isdigit(str[i])) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+int isCharLiteral(const char* str) {
+    // str[0] should be a single quote, str[1] any character and str[2] a single quote again
+    if (strlen(str) == 4 && str[0] == '\'' && str[3] == '\'') {
+        // Check if it's a null character
+        if (str[1] == '\\' && str[2] == '0') {
+            return 1;
+        }
+    }
+    else if (strlen(str) == 3 && str[0] == '\'' && str[2] == '\'') {
+        return 1;
+    }
+
+    // if the string does not match these patterns, it is not a char literal
+    return 0;
+}
+
+int isStringLiteral(const char* str) {
+    // A string literal is usually enclosed in double quotes (like "foo")
+    // so we expect the string to be at least 2 characters long.
+    // str[0] should be a double quote and str[strlen(str) - 1] should be a double quote again
+    int len = strlen(str);
+    if (len >= 2 && str[0] == '\"' && str[len - 1] == '\"') {
+        return 1;
+    }
+
+    // If the string does not match this pattern, it is not a string literal
+    return 0;
+}
+
+int isRealLiteral(const char* str) {
+    char* endptr;
+    strtod(str, &endptr);
+
+    // Check if the string contains a decimal point '.'
+    if (strchr(str, '.') == NULL) {
+        return 0;
+    }
+
+    return *endptr == '\0' && str != endptr && *str != '\0';
+}
+
+int isUnaryOperator(const char* token) {
+    // Currently only support address-of operator
+    return strcmp(token, "&") == 0 || strcmp(token, "*") == 0 || strcmp(token, "ARRAY_ELEMENT") == 0 || strcmp(token, "abs") == 0;
+}
+
+char* checkBinaryOperationType(node *left, node *right, char *operation) {
+    char* leftType = getNodeType(left);
+    char* rightType = getNodeType(right);
+    if (leftType == NULL || rightType == NULL) {
+        return NULL;
+    }
+    // Handle arithmetic operations
+    if (strcmp(operation, "+") == 0 || strcmp(operation, "-") == 0 ||
+        strcmp(operation, "*") == 0 || strcmp(operation, "/") == 0) {
+        if((strcmp(leftType, "int") == 0 || strcmp(leftType, "real") == 0) &&
+        (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {
+            if (strcmp(leftType, "int") == 0 && strcmp(rightType, "int") == 0) {
+                return "int";
+            } else {
+                return "real";
+            }
+        } else {
+            char errorMsg[256];
+            sprintf(errorMsg, "Error: Invalid types for operation '%s'. Operands must be int or real. Left operand is '%s', right operand is '%s'",operation, leftType, rightType);
+            yyerror(errorMsg);
+            return NULL;
+        }
+    }
+
+    // Handle logical operations
+    if (strcmp(operation, "&&") == 0 || strcmp(operation, "||") == 0) {
+        if (strcmp(leftType, "bool") == 0 && strcmp(rightType, "bool") == 0) {
+            return "bool";
+        } else {
+            char errorMessage[100];
+            sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type bool, but got '%s' and '%s'", leftType, rightType);
+            yyerror(errorMessage);
+            return NULL;
+        }
+    }
+
+    // Handle comparison operations
+    if (strcmp(operation, ">") == 0 || strcmp(operation, "<") == 0 ||
+        strcmp(operation, "<=") == 0 || strcmp(operation, ">=") == 0) {
+        if ((strcmp(leftType, "int") == 0 || strcmp(leftType, "real") == 0) &&
+            (strcmp(rightType, "int") == 0 || strcmp(rightType, "real") == 0)) {
+            return "bool";
+        } else {
+            char errorMessage[100];
+            sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type int or real, but got '%s' and '%s'", leftType, rightType);
+            yyerror(errorMessage);
+            return NULL;
+        }
+    }
+
+    // Handle equality/inequality operations
+    if (strcmp(operation, "==") == 0 || strcmp(operation, "!=") == 0) {
+        if (strcmp(leftType, rightType) == 0) {
+            return "bool";
+        } else {
+            // Handle the case of comparing a pointer with a non-pointer
+            if ((leftType[0] == '*' && strcmp(leftType, rightType + 1) == 0) ||
+                (rightType[strlen(rightType) - 1] == '*' && strcmp(rightType, leftType + 1) == 0)) {
+                return "bool";
+            }
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of the same type or compatible pointer types, but got '%s' and '%s'", leftType, rightType);
+            yyerror(errorMessage);
+            return NULL;
+        }
+    }
+
+    // Handle array indexing
+    if (strcmp(operation, "array_index") == 0) {
+        if (strcmp(leftType, "string") == 0 && strcmp(rightType, "int") == 0) {
+            return "char";
+        }
+        // Check if the left operand type ends with '*' (is a pointer)
+        else if (leftType[strlen(leftType) - 1] == '*' && strcmp(rightType, "int") == 0) {
+            // Copy the left type and remove the last character (*) to get the indexed type
+            char *indexedType = strdup(leftType);
+            indexedType[strlen(indexedType) - 1] = '\0';
+            return indexedType;
+        }
+        else {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid types for array indexing. Left operand must be of pointer type and right operand must be of type int, but got '%s' and '%s'", leftType, rightType);
+            yyerror(errorMessage);
+            return NULL;
+        }
+    }
+
+
+    // Catch-all for unsupported operations
+    yyerror("Error: Unsupported operation: %s", operation);
+    return NULL;
+}
+
+char* checkUnaryOperationType(node *operand, char *operation) {
+    symbol_table_entry *entry = lookupSymbolTable(operand->token);
+    if (entry == NULL) {
+        char errorMessage[150];
+        sprintf(errorMessage, "Error: Undefined variable: %s\n", operand->token);
+        yyerror(errorMessage);
+        return NULL;
+    }
+    if (strcmp(operation, "!") == 0 && strcmp(entry->type, "bool") != 0) {
+        char errorMessage[150];
+        sprintf(errorMessage, "Error: Invalid type for operation '!'. Operand must be of type bool, but got %s\n", entry->type);
+        yyerror(errorMessage);
+        return NULL;
+    }
+    if (strcmp(operation, "abs") == 0 && !(strcmp(entry->type, "string") == 0)) {
+        char errorMessage[150];
+        sprintf(errorMessage, "Error: Invalid type for operation 'abs'. Operand must be of type string, but got %s\n", entry->type);
+        yyerror(errorMessage);
+        return NULL;
+    }
+    if (strcmp(operation, "&") == 0) {
+        char* type = malloc(strlen(entry->type) + 2); // Allow space for '*' and '\0'
+        strcpy(type, entry->type);
+        strcat(type, "*");
+        return type;
+    }
+    // Handle dereference operation
+    if (strcmp(operation, "*") == 0) {
+        if (entry->type[strlen(entry->type) - 1] != '*') {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Invalid type for dereference operation. Operand must be of pointer type, but got %s\n", entry->type);
+            yyerror(errorMessage);
+                return NULL;
+        }
+        // remove the last character (*) to get the dereferenced type
+        char *dereferenced_type = strdup(entry->type);
+        dereferenced_type[strlen(dereferenced_type) - 1] = '\0';
+        return dereferenced_type;
+    }
+    return entry->type;
+}
+
+bool isOperator(char* token) {
+    char* operators[] = {"&&", "||", "==", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "!", "abs"};
+    int num_operators = sizeof(operators) / sizeof(operators[0]);
+
+    for (int i = 0; i < num_operators; i++) {
+        if (strcmp(token, operators[i]) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+char* getNodeType(node *n) {
+    if (n == NULL) {
+        yyerror("Error: Null node encountered when trying to get node type");
+        return NULL;
+    }
+    if (n->left == NULL && n->right == NULL) { // Identifier or literal
+        if (isOperator(n->token)) {
+            yyerror("Error: Unexpected operator '%s' encountered when a variable or literal was expected", n->token);
+            return NULL; // Operators don't have a type in the same sense as variables or literals
+        }
+        if (isNumericLiteral(n->token)) {
+            return "int";
+        }
+        if (isCharLiteral(n->token)) {
+            return "char";
+        }
+        if (strcmp(n->token, "true") == 0 || strcmp(n->token, "false") == 0) {
+            return "bool";
+        }
+        if (isStringLiteral(n->token)) {
+            return "string";
+        }
+        if (isRealLiteral(n->token)) {
+            return "real";
+        }
+        symbol_table_entry* entry = lookupSymbolTable(n->token);
+        if (entry == NULL) {
+            yyerror("Error: Identifier '%s' not declared in the current scope", n->token);
+            return NULL;
+        }
+        return entry->type;
+    }
+    else if (strcmp(n->token, "call") == 0) { // Function call
+        // assume the function return type is stored in the symbol table
+        symbol_table_entry* entry = lookupSymbolTable(n->left->token); // n->left->token is function name
+        if (entry == NULL) {
+            yyerror("Error: Function '%s' not declared", n->left->token);
+            return NULL;
+        }
+        return entry->type; // return type of the function
+    }
+    else if (n->right == NULL) { // Unary operation
+        if (!isUnaryOperator(n->token)) {
+            yyerror("Error: Operator '%s' not applicable in unary operation", n->token);
+            return NULL;
+        }
+        if (strcmp(n->token, "abs") == 0) {
+            return "int";
+        }
+        return checkUnaryOperationType(n->left, n->token);
+    }
+    else { // Binary operation
+        if (n->left == NULL || n->right == NULL) {
+            yyerror("Error: Binary operation '%s' missing an operand", n->token);
+            return NULL;
+        }
+        char* leftType = getNodeType(n->left);
+        char* rightType = getNodeType(n->right);
+
+        if (leftType == NULL || rightType == NULL) {
+            return NULL; // Error would have been printed already
+        }
+
+        // Check the type compatibility of operands with the operation
+        return checkBinaryOperationType(n->left, n->right, n->token);
+    }
+    yyerror("Error: Node '%s' represents an operation but it's missing type at this level", n->token);
+    return NULL; // For nodes representing operations, there is no type at this level.
+}
+
+char* getTypeOfExpression(node* expr) {
+    if (expr == NULL) {
+        return NULL;
+    }
+
+    /* If it's a binary operation, check the types of both operands */
+    if (expr->left && expr->right) {
+        // Check if it's array access operation
+        if(strcmp(expr->token, "ARRAY_ELEMENT") == 0) {
+            char* leftType = getNodeType(expr->left); // This should be the array identifier
+            char* rightType = getNodeType(expr->right); // This should be the index
+            if (leftType == NULL || rightType == NULL) {
+                return NULL; // Error message would have been printed already
+            }
+
+            if (strcmp(leftType, "string") != 0 || strcmp(rightType, "int") != 0) {
+                yyerror("Invalid array access: array type is %s and index type is %s", leftType, rightType);
+                return NULL;
+            }
+
+            return "char*"; // The type of an element in a string array is "char"
+        }
+        else {
+            // For other binary operations, proceed as before
+            char* leftType = getNodeType(expr->left);
+            char* rightType = getNodeType(expr->right);
+
+            if (leftType == NULL || rightType == NULL) {
+                return NULL; // Error message would have been printed already
+            }
+
+            if (strcmp(leftType, rightType) != 0) {
+                yyerror("Type mismatch in binary operation: %s %s", leftType, rightType);
+                return NULL;
+            }
+            // The type of the operation is dependent on the operator
+            if (strcmp(expr->token, "<") == 0 || strcmp(expr->token, ">") == 0 ||
+                strcmp(expr->token, "==") == 0 || strcmp(expr->token, "!=") == 0 ||
+                strcmp(expr->token, ">=") == 0 || strcmp(expr->token, "<=") == 0) {
+                return "bool";
+            }
+            return leftType; // for arithmetic operations, the type of the operation is the same as the operands
+        }
+    }
+    /* If it's a unary operation or a simple identifier, just look up its type in the symbol table */
+    else {
+        // Check if it's a function call
+        if (strcmp(expr->token, "call") == 0) {
+            symbol_table_entry *entry = lookupSymbolTable(expr->left->token); // Assuming left node holds function name
+            if (entry != NULL && strcmp(entry->type, "function") == 0) {
+                return entry->return_type;
+            } else {
+                yyerror("Function %s is not declared in any scope\n", expr->left->token);
+                return NULL;
+            }
+        }
+        if (expr->token[0] == '&') {
+            if(strcmp(expr->left->token, "ARRAY_ELEMENT") == 0) {
+                symbol_table_entry* entry = lookupSymbolTable(expr->left->left->token);
+                if (entry == NULL || strcmp(entry->type, "string") != 0) {
+                    yyerror("Variable not defined or not a string array");
+                    return NULL;
+                }
+                return "char*";
+            } else {
+                symbol_table_entry* entry = lookupSymbolTable(expr->left->token);
+                if (entry == NULL) {
+                    yyerror("Variable not defined");
+                    return NULL;
+                }
+                char *pointer_type = malloc(strlen(entry->type) + 2);
+                strcpy(pointer_type, entry->type);
+                strcat(pointer_type, "*");
+
+                return pointer_type;
+            }
+        } else if (expr->token[0] == '*') {
+                symbol_table_entry* entry = lookupSymbolTable(expr->token + 1);
+                if (entry == NULL || strlen(entry->type) < 2 || entry->type[strlen(entry->type) - 1] != '*') {
+                    yyerror("Variable not defined or not a pointer");
+                    return NULL;
+                }
+
+                // remove the last character (*) to get the dereferenced type
+                char *dereferenced_type = strdup(entry->type);
+                dereferenced_type[strlen(dereferenced_type) - 1] = '\0';
+                return dereferenced_type;
+        } else {
+            return getNodeType(expr);
+        }
+    }
+}
+
+node* reverseTree(node* root)
+{
+    if(root == NULL || root->right == NULL)
+    {
+        return root;
+    }
+
+    node* newRoot = reverseTree(root->right);
+
+    root->right->right = root;
+    root->right = NULL;
+
+    return newRoot;
+}
+
+void printStack(function_stack_node* stack)
+{
+    if (stack == NULL) {
+        printf("Function stack is empty.\n");
+        return;
+    }
+
+    printf("Function stack:\n");
+
+    function_stack_node* current_node = stack;
+    while (current_node != NULL) {
+        printf("%s\n", current_node->function_name);
+        current_node = current_node->next;
+    }
+}
+
+
+void push(function_stack_node** stack, char* function_name)
+{
+    function_stack_node* new_node = malloc(sizeof(function_stack_node));
+    new_node->function_name = strdup(function_name);
+    new_node->next = *stack;
+    *stack = new_node;
+}
+
+char* pop(function_stack_node** stack)
+{
+    if (*stack == NULL) {
+        return NULL;
+    }
+
+    function_stack_node* top_node = *stack;
+    char* function_name = top_node->function_name;
+    *stack = top_node->next;
+    free(top_node);
+
+    return function_name;
+}
+
+char* peek(function_stack_node* stack)
+{
+    if (stack == NULL) {
+        return NULL;
+    }
+
+    return stack->function_name;
+}
+
+unsigned long hash(char* str)
+{
+    unsigned long hash = 5381;  // magic number for better distribution
+    int c;
+    while ((c = *str++))
+        hash = ((hash << 5) + hash) + c; // hash * 33 + c
+    return hash % HASH_TABLE_SIZE;
+}
+
+void addCalledFunction(char* functionName) {
+    int index = hash(functionName);
+    calledFunctions[index] = true;
+}
+
+bool isFunctionCalled(char* functionName) {
+    int index = hash(functionName);
+    return calledFunctions[index];
+}
+
+void gatherCalledFunctions(node* root) {
+    if(root == NULL) {
+        return;
+    }
+    if (strcmp(root->token, "call") == 0) {
+        addCalledFunction(root->left->token);
+    }
+
+    gatherCalledFunctions(root->left);
+    gatherCalledFunctions(root->right);
+}
+
+void addDeclaredVariable(char* varName) {
+    int index = hash(varName);
+    declaredVariables[index] = true;
+    variableNames[index] = varName;
+}
+
+void useVariable(char* varName) {
+    int index = hash(varName);
+    usedVariables[index] = true;
+}
+
+void printHashTable() {
+    for (int i = 0; i < HASH_TABLE_SIZE; i++) {
+        if (calledFunctions[i])
+            printf("Index %d: true\n", i);
+    }
+}
+
+bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root) {
+    bool deadCodeFound = false;
+    bool unusedVariableFound = false;
+    function_stack_node* stackNode = functionStack;
+
+    // Gather all called functions
+    gatherCalledFunctions(root);
+
+    // printHashTable();
+
+    // Go through each function in the function stack
+    while (stackNode != NULL) {
+        // If a function in the stack is not found being called in the AST, it's dead code
+        if (!isFunctionCalled(stackNode->function_name)) {
+            printf("Unused Function found: Function '%s' is never called.\n", stackNode->function_name);
+            deadCodeFound = true;
+        }
+
+        stackNode = stackNode->next;
+    }
+
+    // Go through the symbol table to find unused variables
+    for (int i = 0; i < HASH_TABLE_SIZE; i++) {
+        if (declaredVariables[i] && !usedVariables[i]) {
+            printf("Unused variable found: Variable '%s' is declared but never used.\n", variableNames[i]);
+            unusedVariableFound = true;
+        }
+    }
+
+    return deadCodeFound || unusedVariableFound;
+}
+
+int isOperator2(char* token) {
+    // add more operators based on language here
+    if (strcmp(token, "+") == 0 || strcmp(token, "-") == 0 || strcmp(token, "*") == 0 || strcmp(token, "/") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+unsigned int hashExpression(char* expr) {
+    unsigned long hash = 5381;
+    int c;
+
+    while ((c = *expr++))
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+
+    return hash % EXPR_TABLE_SIZE;
+}
 
 void indent(int n)
 {
@@ -1647,6 +2152,12 @@ void printThreeAddressCode(node *tree, int indentLevel) {
     if (tree == NULL) return;
 
     if (strcmp(tree->token, "function") == 0) {
+
+        if (!isFunctionCalled(tree->left->token)) {
+            // If the function is not called, skip the generation of its code
+            return;
+        }
+
         // Print the function name
         indent(indentLevel);
         printf("\033[0;31m%s:\033[0m\n", tree->left->token);
@@ -1659,17 +2170,6 @@ void printThreeAddressCode(node *tree, int indentLevel) {
 
         if(functionNode != NULL){
             argsNode = functionNode->left; // Fetch the 'arguments' node
-        }
-        // TAC generation for each function argument
-        if(argsNode != NULL && strcmp(argsNode->token, "arguments") == 0) {
-            node *argumentNode = argsNode->left;
-            while(argumentNode != NULL) {
-                if (strcmp(argumentNode->token, "argument") == 0) {
-                    indent(indentLevel + 2);
-                    printf("Param %s\n", argumentNode->left->right->token);
-                }
-                argumentNode = argumentNode->right;
-            }
         }
 
         // Traverse to the body node
@@ -1684,7 +2184,6 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         }
         printf("\tEndFunc\n");
     }
-
     else if (strcmp(tree->token, "return") == 0) {
         printThreeAddressCode(tree->left, indentLevel);
         indent(indentLevel - 1);
@@ -1929,7 +2428,7 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         indent(indentLevel - 1);
         printf("L%d:\n", falseLabel);
     }
-   else if (strcmp(tree->token, "if_else") == 0) {
+    else if (strcmp(tree->token, "if_else") == 0) {
         int shortCircuitLabel, trueLabel, falseLabel, endLabel;
         trueLabel = labelCounter++;
 
@@ -2016,30 +2515,149 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         printf("L%d:\n", endLabel); // print label for end of 'if_else' structure
     }
     else {
-        // Generate Three Address Code recursively in post-order
-        printThreeAddressCode(tree->left, indentLevel);
-        printThreeAddressCode(tree->right, indentLevel);
+            // Generate Three Address Code recursively in post-order
+            printThreeAddressCode(tree->left, indentLevel);
+            printThreeAddressCode(tree->right, indentLevel);
 
-        if (strcmp(tree->token, "=") == 0) {
-            indent(indentLevel);
-            printf("%s = %s\n", tree->left->token, tree->right->tac);
-        }
-        else if (isOperator2(tree->token)) {
-            // Allocate memory for the temporary variable
-            char *tempVar = (char*)malloc(10*sizeof(char));
-            // Generate the temporary variable name
-            sprintf(tempVar, "t%d", tempVarCounter++);
-            tree->tac = tempVar;
+            if (strcmp(tree->token, "=") == 0) {
+                indent(indentLevel);
+                printf("%s = %s\n", tree->left->token, tree->right->tac ? tree->right->tac : tree->right->token);
+            }
+            else if (isOperator2(tree->token)) {
+                if (tree->left != NULL && tree->right != NULL) {
+                    char *tempVar;
+                    // Allocate memory for the temporary variable
+                    tempVar = (char*)malloc(10*sizeof(char));
+                    // Generate the temporary variable name
+                    sprintf(tempVar, "t%d", tempVarCounter++);
 
-            // Print the TAC
-            indent(indentLevel);
-            printf("%s = %s %s %s\n", tree->tac, tree->left->tac, tree->token, tree->right->tac);
+                    tree->tac = tempVar;
+
+                    // Print the TAC
+                    indent(indentLevel);
+                    printf("%s = %s %s %s\n", tree->tac,
+                                            tree->left->tac ? tree->left->tac : tree->left->token,
+                                            tree->token,
+                                            tree->right->tac ? tree->right->tac : tree->right->token);
+                }
+            }
+            else {
+                // Assign token itself as TAC for leaf nodes
+                tree->tac = tree->token;
+            }
         }
+}
+
+void freeNode(node* n) {
+    if(n != NULL) {
+        free(n->token);
+        freeNode(n->left);
+        freeNode(n->right);
+        free(n);
+    }
+}
+
+double performOperation(char* op, double leftVal, double rightVal) {
+    if(strcmp(op, "+") == 0)
+        return leftVal + rightVal;
+    else if(strcmp(op, "-") == 0)
+        return leftVal - rightVal;
+    else if(strcmp(op, "*") == 0)
+        return leftVal * rightVal;
+    else if(strcmp(op, "/") == 0) {
+        if (rightVal != 0.0)  // prevent division by zero
+            return leftVal / rightVal;
         else {
-            // Assign token itself as TAC for leaf nodes
-            tree->tac = tree->token;
+            fprintf(stderr, "Error: Division by zero.\n");
+            exit(EXIT_FAILURE);
         }
     }
+    else if(strcmp(op, "==") == 0)
+        return leftVal == rightVal;
+    else if(strcmp(op, "!=") == 0)
+        return leftVal != rightVal;
+    else if(strcmp(op, "<") == 0)
+        return leftVal < rightVal;
+    else if(strcmp(op, ">") == 0)
+        return leftVal > rightVal;
+    else if(strcmp(op, "<=") == 0)
+        return leftVal <= rightVal;
+    else if(strcmp(op, ">=") == 0)
+        return leftVal >= rightVal;
+    else if(strcmp(op, "&&") == 0)
+        return leftVal && rightVal;
+    else if(strcmp(op, "||") == 0)
+        return leftVal || rightVal;
+    else {
+        fprintf(stderr, "Error: Unknown operator.\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+char* convertResultToString(double result) {
+    char* resultStr = (char*)malloc(20 * sizeof(char));
+    if (resultStr == NULL) {
+        fprintf(stderr, "Error: Memory allocation failed.\n");
+        exit(EXIT_FAILURE);
+    }
+    // Check if result is boolean
+    if(result == 0.0 || result == 1.0) {
+        sprintf(resultStr, "%s", result == 1.0 ? "true" : "false");
+    } else {
+        sprintf(resultStr, "%.2f", result);
+    }
+    return resultStr;
+}
+
+void updateRootNode(node* root, char* resultStr) {
+    free(root->token);
+    root->token = resultStr;
+    freeNode(root->left);
+    freeNode(root->right);
+    root->left = NULL;
+    root->right = NULL;
+}
+
+node* constantFoldingOptimization(node* root) {
+    if(root == NULL) {
+        return NULL;
+    }
+
+    // Apply the optimization recursively first
+    root->left = constantFoldingOptimization(root->left);
+    root->right = constantFoldingOptimization(root->right);
+
+    // Optimization for different node types
+    if(isOperator2(root->token)) {
+        double leftVal, rightVal, result;
+        char* resultStr;
+
+        // If the node's both left and right children are not NULL and both are numeric or real literals
+        if(root->left != NULL && root->right != NULL &&
+           (isNumericLiteral(root->left->token) || isRealLiteral(root->left->token)) &&
+           (isNumericLiteral(root->right->token) || isRealLiteral(root->right->token))) {
+            leftVal = atof(root->left->token);
+            rightVal = atof(root->right->token);
+            result = performOperation(root->token, leftVal, rightVal);
+            resultStr = convertResultToString(result);
+            updateRootNode(root, resultStr);
+        }
+
+        // Optimization for the case where the left child is an operator and right child is numeric or real literal
+        if(root->left != NULL && root->right != NULL &&
+           isOperator2(root->left->token) &&
+           (isNumericLiteral(root->right->token) || isRealLiteral(root->right->token))) {
+            root->left = constantFoldingOptimization(root->left);
+        }
+
+        // Optimization for the case where the right child is an operator and left child is numeric or real literal
+        if(root->left != NULL && root->right != NULL &&
+           (isNumericLiteral(root->left->token) || isRealLiteral(root->left->token)) &&
+           isOperator2(root->right->token)) {
+            root->right = constantFoldingOptimization(root->right);
+        }
+    }
+    return root;
 }
 
 int yyerror(const char *fmt, ...)
@@ -2079,6 +2697,9 @@ int main(int argc, char *argv[])
     functionsStack = malloc(sizeof(function_stack_node *));
     *functionsStack = NULL;
 
+    temporaryStack = malloc(sizeof(function_stack_node *));
+    *temporaryStack = NULL;
+
     yyin = inputFile;
     if (yyparse() != 0) {
         fprintf(stderr, "Error: Parsing failed\n");
@@ -2086,8 +2707,16 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // ! WILL PRINT 3AC ON ACTIVATION.
-    /* printThreeAddressCode(root, 0); */
+    // Constant Folding Optimization.
+    root = constantFoldingOptimization(root);
+
+    // Check for dead code after parsing and before generating 3AC
+    if (!isDeadCode(current_table, *temporaryStack, root)) {
+        printf("There is no dead code in the program.\n");
+    }
+
+    // 3AC Code Generation.
+    printThreeAddressCode(root, 0);
 
     fclose(inputFile);
 
