@@ -258,7 +258,7 @@
 // Definitions for nonterminal symbols, specifying what type of value they will hold
 %type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
-%type <node> program return_type relational assignment
+%type <node> program return_type relational assignment single_statement
 %type <node> code_block if_statement while_statement do_while_statement for_statement factor term unary atom
 
 // Operator precedence, from highest to lowest
@@ -500,7 +500,7 @@ statements_list:
 
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
-statement:
+single_statement:
      VAR identifiers_list COLON POINTER_TYPE SEMICOLON
         {
             $$ = createNode("declare_pointer", $2, createNode($4, NULL, NULL));
@@ -702,12 +702,17 @@ statement:
             popSymbolTable(); // end the scope for the subroutine
         }
     | function_call SEMICOLON
+    ;
+
+statement:
+    single_statement
     | code_block
     | if_statement
     | while_statement
     | do_while_statement
     | for_statement
     ;
+
 
 
 /* non-terminal for a function call. */
@@ -837,6 +842,52 @@ if_statement:
 
             popSymbolTable(); /* Pop the symbol table after exiting if block scope */
         }
+    | IF LPAREN expression RPAREN single_statement ELSE single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            node* if_body_node = createNode("if_body", $5, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+
+            /* Push a new symbol table for else statement scope */
+            symbol_table *elseTable = createSymbolTable();
+            pushSymbolTable(elseTable);
+
+            node* else_body_node = createNode("else_body", $7, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting else block scope */
+
+            $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
+        }
+    | IF LPAREN expression RPAREN single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            $$ = createNode("if", $3, createNode("if_body", $5, NULL));
+
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+        }
 ;
 
 /* Used to parse while loops. */
@@ -861,6 +912,26 @@ while_statement:
 
             popSymbolTable(); /* Pop the symbol table after exiting while loop scope */
         }
+    | WHILE LPAREN expression RPAREN single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for while loop scope */
+            symbol_table *whileTable = createSymbolTable();
+            pushSymbolTable(whileTable);
+
+            $$ = createNode("while", $3, createNode("body", $5, NULL));
+
+            popSymbolTable(); /* Pop the symbol table after exiting while loop scope */
+        }
 ;
 
 /* Used to parse do-while loops. */
@@ -882,6 +953,26 @@ do_while_statement:
             pushSymbolTable(doWhileTable);
 
             $$ = createNode("do_while", $3, $7);
+
+            popSymbolTable(); /* Pop the symbol table after exiting do-while loop scope */
+        }
+    | DO single_statement WHILE LPAREN expression RPAREN SEMICOLON
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($5);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a do-while statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for do-while loop scope */
+            symbol_table *doWhileTable = createSymbolTable();
+            pushSymbolTable(doWhileTable);
+
+            $$ = createNode("do_while", $2, $5);
 
             popSymbolTable(); /* Pop the symbol table after exiting do-while loop scope */
         }
@@ -921,7 +1012,39 @@ for_statement:
 
             popSymbolTable(); /* Pop the symbol table after exiting for loop scope */
         }
-    ;
+    | FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($5);
+
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of a for statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for for loop scope */
+            symbol_table *forTable = createSymbolTable();
+            pushSymbolTable(forTable);
+
+            node* initialization = $3;
+            node* condition = $5;
+            node* increment = $7;
+            node* body = $9;
+
+            /* Build the nodes in stages */
+            node* initialization_node = createNode("for_initialization", initialization, NULL);
+            node* condition_node = createNode("for_condition", condition, NULL);
+            node* increment_node = createNode("for_increment", increment, NULL);
+            node* body_node = createNode("for_body", body, NULL);
+
+            /* Combine the four nodes into one */
+            $$ = createNode("for_statement",createNode("for_header",initialization_node,createNode("for_conditions",condition_node,increment_node)),body_node);
+
+            popSymbolTable(); /* Pop the symbol table after exiting for loop scope */
+        }
+;
 
 expression:
     /* Logical operations */
