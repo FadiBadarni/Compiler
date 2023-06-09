@@ -180,6 +180,8 @@
     // Prints the contents of the hash tables
     void printHashTable();
 
+    bool findEmptyIfElse(node* n);
+
     // Checks if a piece of code is dead code
     bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root);
 
@@ -218,6 +220,8 @@
 
     // Error handling function, prints an error message and exits the program
     int yyerror(const char *fmt, ...);
+
+    void yywarn(const char *fmt, ...);
 
 %}
 
@@ -258,7 +262,7 @@
 // Definitions for nonterminal symbols, specifying what type of value they will hold
 %type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
-%type <node> program return_type relational assignment single_statement
+%type <node> program return_type relational assignment single_statement statements_list_opt
 %type <node> code_block if_statement while_statement do_while_statement for_statement factor term unary atom
 
 // Operator precedence, from highest to lowest
@@ -498,6 +502,13 @@ statements_list:
     | statements_list statement  { $$ = createNode("statements", $1, $2); }
     ;
 
+statements_list_opt:
+    /* empty */
+    {
+        $$ = createNode("statements", NULL, NULL);
+    }
+    | statements_list
+;
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
 single_statement:
@@ -515,7 +526,8 @@ single_statement:
                     yyerror(errorMessage);
                     YYABORT;
                 }
-                id_node = id_node->left;
+                addDeclaredVariable(id_node->token);
+                id_node = id_node->right;
                 free(type);
             }
         }
@@ -537,6 +549,38 @@ single_statement:
                 id_node = id_node->right;
             }
         }
+    | VAR IDENTIFIER ASSIGNMENT expression COLON type SEMICOLON
+    {
+        // Assuming $2 is a linked list of identifier names
+        node* id_node = createNode($2, NULL, NULL);
+
+        if (addSymbolTableEntry(id_node->token, $6->token) == -1) {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Variable '%s' redeclaration or memory allocation error.", id_node->token);
+            yyerror(errorMessage);
+            YYABORT;
+        }
+
+        // Add variable to declared list
+        addDeclaredVariable(id_node->token);
+
+        // Perform type check between assigned expression and declared type
+        char* expression_type = getTypeOfExpression($4);
+        if (expression_type == NULL) {
+            // An error message would have been printed by getTypeOfExpression
+            YYABORT;
+        }
+
+        if (strcmp($6->token, expression_type) != 0) {
+            char errorMessage[150];
+            sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $2, $6->token, expression_type);
+            yyerror(errorMessage);
+            YYABORT;
+        }
+
+        // Create the AST node
+        $$ = createNode("declare_assign", id_node, createNode($6->token, $4, NULL));
+    }
     | IDENTIFIER ASSIGNMENT expression SEMICOLON
         {
             $$ = createNode("=", createNode($1, NULL, NULL), $3);
@@ -561,10 +605,16 @@ single_statement:
             }
 
             if (strcmp(entry->type, expression_type) != 0) {
-                char errorMessage[150];
-                sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, expression_type);
-                yyerror(errorMessage);
-                YYABORT;
+                // Allow assignment of null to any pointer type
+                if (strcmp(expression_type, "null") == 0 && strchr(entry->type, '*') != NULL) {
+                    // Do nothing, assignment of null to pointer type is allowed
+                }
+                else {
+                    char errorMessage[150];
+                    sprintf(errorMessage, "Error: Type mismatch in assignment to variable '%s'. Expected: '%s', Found: '%s'.", $1, entry->type, expression_type);
+                    yyerror(errorMessage);
+                    YYABORT;
+                }
             }
 
             // Check if expression is a function call and perform the necessary actions
@@ -626,7 +676,6 @@ single_statement:
 
             $$ = createNode("=", createNode("*", createNode($2, NULL, NULL), NULL), $4);
         }
-    //TODO: MIGHT NEED CHANGING IN SYNTAX
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
         {
             if (current_table == NULL) {
@@ -653,7 +702,37 @@ single_statement:
             $$ = createNode("declare_string", createNode($2, NULL, NULL), createNode($4, NULL, NULL));
         } /* Strings declarations */
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET ASSIGNMENT STRING_LITERAL SEMICOLON
-        { $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL))); }
+        {
+            if (current_table == NULL) {
+                yyerror("Error: Symbol table is not initialized\n");
+                YYABORT;
+            }
+
+            if ($1 == NULL || $2 == NULL || $7 == NULL) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Null values provided for declaration.");
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            symbol_table_entry* entry = lookupSymbolTableInCurrentScope($2);
+            if (entry != NULL) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' already declared in current scope.", $2);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            if (strlen($7) > atoi($4)) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Initialization string length exceeds declared size for variable '%s'.", $2);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            addSymbolTableEntry($2, $1->token);
+             $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL)));
+        }
     | IDENTIFIER LBRACKET expression RBRACKET ASSIGNMENT CHAR_LITERAL SEMICOLON
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
@@ -796,7 +875,72 @@ code_block:
 
 /* Used to parse if-else statements as well as standalone if statements. */
 if_statement:
-    IF LPAREN expression RPAREN LBRACE statements_list RBRACE ELSE LBRACE statements_list RBRACE
+    IF LPAREN expression RPAREN LBRACE statements_list_opt RBRACE ELSE LBRACE statements_list_opt RBRACE
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Check if the code blocks for 'if' or 'else' are empty */
+            if ($6->left == NULL && $6->right == NULL) {
+                char warnMessage[50];
+                sprintf(warnMessage, "Empty 'if' statement found.");
+                yywarn(warnMessage);
+            }
+            if ($10->left == NULL && $10->right == NULL) {
+                char warnMessage[50];
+                sprintf(warnMessage, "Empty 'else' statement found.");
+                yywarn(warnMessage);
+            }
+
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            node* if_body_node = createNode("if_body", $6, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+
+            /* Push a new symbol table for else statement scope */
+            symbol_table *elseTable = createSymbolTable();
+            pushSymbolTable(elseTable);
+
+            node* else_body_node = createNode("else_body", $10, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting else block scope */
+
+            $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
+        }
+    | IF LPAREN expression RPAREN LBRACE statements_list_opt RBRACE
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            /* Check if the code blocks for 'if' is empty */
+            if ($6->left == NULL && $6->right == NULL) {
+                char warnMessage[50];
+                sprintf(warnMessage, "Empty 'if' statement found.");
+                yywarn(warnMessage);
+            }
+
+            $$ = createNode("if", $3, createNode("if_body", $6, NULL));
+
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+        }
+    | IF LPAREN expression RPAREN LBRACE statements_list_opt RBRACE ELSE single_statement
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
@@ -818,12 +962,12 @@ if_statement:
             symbol_table *elseTable = createSymbolTable();
             pushSymbolTable(elseTable);
 
-            node* else_body_node = createNode("else_body", $10, NULL);
+            node* else_body_node = createNode("else_body", $9, NULL);
             popSymbolTable(); /* Pop the symbol table after exiting else block scope */
 
             $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
         }
-    | IF LPAREN expression RPAREN LBRACE statements_list RBRACE
+    | IF LPAREN expression RPAREN single_statement ELSE LBRACE statements_list_opt RBRACE
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
@@ -838,9 +982,17 @@ if_statement:
             symbol_table *ifTable = createSymbolTable();
             pushSymbolTable(ifTable);
 
-            $$ = createNode("if", $3, createNode("if_body", $6, NULL));
-
+            node* if_body_node = createNode("if_body", $5, NULL);
             popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+
+            /* Push a new symbol table for else statement scope */
+            symbol_table *elseTable = createSymbolTable();
+            pushSymbolTable(elseTable);
+
+            node* else_body_node = createNode("else_body", $8, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting else block scope */
+
+            $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
         }
     | IF LPAREN expression RPAREN single_statement ELSE single_statement
         {
@@ -892,7 +1044,7 @@ if_statement:
 
 /* Used to parse while loops. */
 while_statement:
-    WHILE LPAREN expression RPAREN LBRACE statements_list RBRACE
+    WHILE LPAREN expression RPAREN LBRACE statements_list_opt RBRACE
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
@@ -936,7 +1088,7 @@ while_statement:
 
 /* Used to parse do-while loops. */
 do_while_statement:
-    DO LBRACE statements_list RBRACE WHILE LPAREN expression RPAREN SEMICOLON
+    DO LBRACE statements_list_opt RBRACE WHILE LPAREN expression RPAREN SEMICOLON
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($7);
@@ -980,7 +1132,7 @@ do_while_statement:
 
 /* Used to parse for loops. */
 for_statement:
-    FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN LBRACE statements_list RBRACE
+    FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN LBRACE statements_list_opt RBRACE
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($5);
@@ -1765,6 +1917,9 @@ char* getNodeType(node *n) {
         if (isStringLiteral(n->token)) {
             return "string";
         }
+        if (strcmp(n->token, "null") == 0) {
+            return "null";
+        }
         if (isRealLiteral(n->token)) {
             return "real";
         }
@@ -2018,9 +2173,44 @@ void printHashTable() {
     }
 }
 
+bool findEmptyIfElse(node* n) {
+    if (n == NULL) return false;
+
+    // Check if the node is an if_else block
+    if (strcmp(n->token, "if_else") == 0) {
+        node* if_else_wrapper = n->right;
+        if (if_else_wrapper != NULL) {
+            node* if_body = if_else_wrapper->left;
+            node* else_body = if_else_wrapper->right;
+
+            // Check if if_body or else_body has no statements
+            if (if_body != NULL && if_body->left != NULL && if_body->left->left == NULL) {
+                return true;
+            }
+            if (else_body != NULL && else_body->left != NULL && else_body->left->left == NULL) {
+                return true;
+            }
+        }
+    } else if (strcmp(n->token, "if") == 0) {
+        node* if_body = n->right;
+
+        // Check if if_body has no statements
+        if (if_body != NULL && if_body->left != NULL && if_body->left->left == NULL) {
+            return true;
+        }
+    }
+
+    // Recurse on the children of the node
+    return findEmptyIfElse(n->left) || findEmptyIfElse(n->right);
+}
+
+
+
 bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* root) {
     bool deadCodeFound = false;
     bool unusedVariableFound = false;
+    bool emptyIfElseFound = false;
+
     function_stack_node* stackNode = functionStack;
 
     // Gather all called functions
@@ -2047,7 +2237,9 @@ bool isDeadCode(symbol_table* table, function_stack_node* functionStack, node* r
         }
     }
 
-    return deadCodeFound || unusedVariableFound;
+    emptyIfElseFound = findEmptyIfElse(root);
+
+    return deadCodeFound || unusedVariableFound || emptyIfElseFound;
 }
 
 int isOperator2(char* token) {
@@ -2354,7 +2546,13 @@ void printThreeAddressCode(node *tree, int indentLevel) {
     }
     else if (strcmp(tree->token, "if") == 0) {
         int shortCircuitLabel, trueLabel, falseLabel;
-        trueLabel = labelCounter++;
+
+        node* if_body = tree->right;
+        bool if_body_empty = if_body != NULL && if_body->left != NULL && if_body->left->left == NULL;
+
+        if (!if_body_empty) {
+            trueLabel = labelCounter++;
+        }
 
         if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
             printThreeAddressCode(tree->left->left, indentLevel);
@@ -2410,8 +2608,10 @@ void printThreeAddressCode(node *tree, int indentLevel) {
             printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
 
             // If condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar, trueLabel);
+            if (!if_body_empty) {
+                indent(indentLevel);
+                printf("if %s goto L%d\n", tempVar, trueLabel);
+            }
 
             // Label to skip the if body if condition is false
             falseLabel = labelCounter++;
@@ -2420,99 +2620,122 @@ void printThreeAddressCode(node *tree, int indentLevel) {
         }
 
         // Three address code for 'if' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", trueLabel);
-        printThreeAddressCode(tree->right, indentLevel);
+        if (!if_body_empty) {
+            indent(indentLevel - 1);
+            printf("L%d:\n", trueLabel);
+            printThreeAddressCode(if_body, indentLevel);
 
-        // Label for the rest of the code after the 'if' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", falseLabel);
+            // Label for the rest of the code after the 'if' body
+            indent(indentLevel - 1);
+            printf("L%d:\n", falseLabel);
+        }
     }
     else if (strcmp(tree->token, "if_else") == 0) {
-        int shortCircuitLabel, trueLabel, falseLabel, endLabel;
-        trueLabel = labelCounter++;
+        node* if_else_wrapper = tree->right;
+        node* if_body = if_else_wrapper->left;
+        node* else_body = if_else_wrapper->right;
 
-        if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
-            printThreeAddressCode(tree->left->left, indentLevel);
+        // check if if_body and else_body have statements
+        bool if_body_empty = if_body != NULL && if_body->left != NULL && if_body->left->left == NULL;
+        bool else_body_empty = else_body != NULL && else_body->left != NULL && else_body->left->left == NULL;
 
-            char *tempVar1 = (char*)malloc(10*sizeof(char));
-            sprintf(tempVar1, "t%d", tempVarCounter++);
-            tree->left->left->tac = tempVar1;
+        if (!if_body_empty || !else_body_empty) { // Only generate code if either the if or else body is not empty
+            int shortCircuitLabel, trueLabel, falseLabel, endLabel;
 
-            indent(indentLevel);
-            printf("%s = %s %s %s\n", tempVar1, tree->left->left->left->tac, tree->left->left->token, tree->left->left->right->tac);
+            if (!if_body_empty) {
+                trueLabel = labelCounter++;
+            }
 
-            // Left condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar1, trueLabel);
+            if (strcmp(tree->left->token, "&&") == 0 || strcmp(tree->left->token, "||") == 0) {
+                printThreeAddressCode(tree->left->left, indentLevel);
 
-            // If the first condition is false, we go to the second condition
-            shortCircuitLabel = labelCounter++;
+                char *tempVar1 = (char*)malloc(10*sizeof(char));
+                sprintf(tempVar1, "t%d", tempVarCounter++);
+                tree->left->left->tac = tempVar1;
 
-            indent(indentLevel);
-            printf("goto L%d\n", shortCircuitLabel);
+                indent(indentLevel);
+                printf("%s = %s %s %s\n", tempVar1, tree->left->left->left->tac, tree->left->left->token, tree->left->left->right->tac);
 
-            // Print label for the second condition
+                // Left condition test and jump
+                indent(indentLevel);
+                printf("if %s goto L%d\n", tempVar1, trueLabel);
+
+                // If the first condition is false, we go to the second condition
+                shortCircuitLabel = labelCounter++;
+
+                indent(indentLevel);
+                printf("goto L%d\n", shortCircuitLabel);
+
+                // Print label for the second condition
+                indent(indentLevel - 1);
+                printf("L%d:\n", shortCircuitLabel);
+
+                // Second condition generation
+                printThreeAddressCode(tree->left->right, indentLevel);
+
+                char *tempVar2 = (char*)malloc(10*sizeof(char));
+                sprintf(tempVar2, "t%d", tempVarCounter++);
+                tree->left->right->tac = tempVar2;
+
+                indent(indentLevel);
+                printf("%s = %s %s %s\n", tempVar2, tree->left->right->left->tac, tree->left->right->token, tree->left->right->right->tac);
+
+                // Right condition test and jump
+                indent(indentLevel);
+                printf("if %s goto L%d\n", tempVar2, trueLabel);
+
+                // Label to skip the if body if both conditions are false
+                falseLabel = labelCounter++;
+                indent(indentLevel);
+                printf("goto L%d\n", falseLabel);
+            } else {
+                // Three address code for 'if' condition for non logical operations
+                printThreeAddressCode(tree->left, indentLevel);
+
+                char *tempVar = (char*)malloc(10*sizeof(char));
+                sprintf(tempVar, "t%d", tempVarCounter++);
+                tree->left->tac = tempVar;
+
+                indent(indentLevel);
+                printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
+
+                // If condition test and jump
+                if (!if_body_empty) {
+                    indent(indentLevel);
+                    printf("if %s goto L%d\n", tempVar, trueLabel);
+                }
+
+                // Label to skip the if body if condition is false
+                falseLabel = labelCounter++;
+                indent(indentLevel);
+                printf("goto L%d\n", falseLabel);
+            }
+
+            // Three address code for 'if' body
+            if (!if_body_empty) {
+                indent(indentLevel - 1);
+                printf("L%d:\n", trueLabel);
+                printThreeAddressCode(if_body, indentLevel);
+            }
+
+            // Label for the end of the 'if' block
+            endLabel = labelCounter++;
+            if (!if_body_empty) {
+                indent(indentLevel);
+                printf("goto L%d\n", endLabel);
+            }
+
+            // Label and three address code for 'else' body
+            if (!else_body_empty) {
+                indent(indentLevel - 1);
+                printf("L%d:\n", falseLabel);
+                printThreeAddressCode(else_body, indentLevel);
+            }
+
+            // Print end label
             indent(indentLevel - 1);
-            printf("L%d:\n", shortCircuitLabel);
-
-            // Second condition generation
-            printThreeAddressCode(tree->left->right, indentLevel);
-
-            char *tempVar2 = (char*)malloc(10*sizeof(char));
-            sprintf(tempVar2, "t%d", tempVarCounter++);
-            tree->left->right->tac = tempVar2;
-
-            indent(indentLevel);
-            printf("%s = %s %s %s\n", tempVar2, tree->left->right->left->tac, tree->left->right->token, tree->left->right->right->tac);
-
-            // Right condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar2, trueLabel);
-
-            // Label to skip the if body if both conditions are false
-            falseLabel = labelCounter++;
-            indent(indentLevel);
-            printf("goto L%d\n", falseLabel);
-        } else {
-            // Three address code for 'if' condition for non logical operations
-            printThreeAddressCode(tree->left, indentLevel);
-
-            char *tempVar = (char*)malloc(10*sizeof(char));
-            sprintf(tempVar, "t%d", tempVarCounter++);
-            tree->left->tac = tempVar;
-
-            indent(indentLevel);
-            printf("%s = %s %s %s\n", tempVar, tree->left->left->tac, tree->left->token, tree->left->right->tac);
-
-            // If condition test and jump
-            indent(indentLevel);
-            printf("if %s goto L%d\n", tempVar, trueLabel);
-
-            // Label to skip the if body if condition is false
-            falseLabel = labelCounter++;
-            indent(indentLevel);
-            printf("goto L%d\n", falseLabel);
+            printf("L%d:\n", endLabel); // print label for end of 'if_else' structure
         }
-
-        // Three address code for 'if' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", trueLabel);
-        printThreeAddressCode(tree->right->left, indentLevel);
-
-        // Label for the end of the 'if' block
-        endLabel = labelCounter++;
-        indent(indentLevel);
-        printf("goto L%d\n", endLabel);
-
-        // Label and three address code for 'else' body
-        indent(indentLevel - 1);
-        printf("L%d:\n", falseLabel);
-        printThreeAddressCode(tree->right->right, indentLevel);
-
-        // Print end label
-        indent(indentLevel - 1);
-        printf("L%d:\n", endLabel); // print label for end of 'if_else' structure
     }
     else {
             // Generate Three Address Code recursively in post-order
@@ -2671,6 +2894,18 @@ int yyerror(const char *fmt, ...)
 
     va_end(args);
     return 0;
+}
+
+void yywarn(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+
+    fprintf(stderr, "Warning at line %d: ", yylineno);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+
+    va_end(args);
 }
 
 int main(int argc, char *argv[])
