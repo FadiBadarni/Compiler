@@ -258,7 +258,7 @@
 // Definitions for nonterminal symbols, specifying what type of value they will hold
 %type <node> statement statements_list expression function_call function_call_arguments
 %type <node> subroutines subroutine main arguments arguments_list argument identifiers_list type
-%type <node> program return_type relational assignment single_statement
+%type <node> program return_type relational assignment single_statement statements_list_opt
 %type <node> code_block if_statement while_statement do_while_statement for_statement factor term unary atom
 
 // Operator precedence, from highest to lowest
@@ -498,6 +498,13 @@ statements_list:
     | statements_list statement  { $$ = createNode("statements", $1, $2); }
     ;
 
+statements_list_opt:
+    /* empty */
+    {
+        $$ = createNode("statements", NULL, NULL);
+    }
+    | statements_list
+;
 
 /* Used to parse individual statements, including variable declarations, variable assignments, return statements, and different types of control structures like if, while, do-while, and for loops. */
 single_statement:
@@ -626,7 +633,6 @@ single_statement:
 
             $$ = createNode("=", createNode("*", createNode($2, NULL, NULL), NULL), $4);
         }
-    //TODO: MIGHT NEED CHANGING IN SYNTAX
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET SEMICOLON
         {
             if (current_table == NULL) {
@@ -653,7 +659,37 @@ single_statement:
             $$ = createNode("declare_string", createNode($2, NULL, NULL), createNode($4, NULL, NULL));
         } /* Strings declarations */
     | type IDENTIFIER LBRACKET INT_LITERAL RBRACKET ASSIGNMENT STRING_LITERAL SEMICOLON
-        { $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL))); }
+        {
+            if (current_table == NULL) {
+                yyerror("Error: Symbol table is not initialized\n");
+                YYABORT;
+            }
+
+            if ($1 == NULL || $2 == NULL || $7 == NULL) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Null values provided for declaration.");
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            symbol_table_entry* entry = lookupSymbolTableInCurrentScope($2);
+            if (entry != NULL) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Variable '%s' already declared in current scope.", $2);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            if (strlen($7) > atoi($4)) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Initialization string length exceeds declared size for variable '%s'.", $2);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            addSymbolTableEntry($2, $1->token);
+             $$ = createNode("declare_initialize_string", createNode($2, NULL, NULL), createNode("initialize_data", createNode("size", createNode($4, NULL, NULL), NULL), createNode("value", createNode($7, NULL, NULL), NULL)));
+        }
     | IDENTIFIER LBRACKET expression RBRACKET ASSIGNMENT CHAR_LITERAL SEMICOLON
         { $$ = createNode("array_assign", createNode("array_index", createNode($1, NULL, NULL), $3), createNode($7, NULL, NULL)); } /* String element assignments */
     | RETURN expression SEMICOLON
@@ -796,7 +832,7 @@ code_block:
 
 /* Used to parse if-else statements as well as standalone if statements. */
 if_statement:
-    IF LPAREN expression RPAREN LBRACE statements_list RBRACE ELSE LBRACE statements_list RBRACE
+    IF LPAREN expression RPAREN LBRACE statements_list_opt RBRACE ELSE LBRACE statements_list_opt RBRACE
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
@@ -823,7 +859,7 @@ if_statement:
 
             $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
         }
-    | IF LPAREN expression RPAREN LBRACE statements_list RBRACE
+    | IF LPAREN expression RPAREN LBRACE statements_list_opt RBRACE
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
@@ -841,6 +877,60 @@ if_statement:
             $$ = createNode("if", $3, createNode("if_body", $6, NULL));
 
             popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+        }
+    | IF LPAREN expression RPAREN LBRACE statements_list_opt RBRACE ELSE single_statement
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            node* if_body_node = createNode("if_body", $6, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+
+            /* Push a new symbol table for else statement scope */
+            symbol_table *elseTable = createSymbolTable();
+            pushSymbolTable(elseTable);
+
+            node* else_body_node = createNode("else_body", $9, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting else block scope */
+
+            $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
+        }
+    | IF LPAREN expression RPAREN single_statement ELSE LBRACE statements_list_opt RBRACE
+        {
+            /* Check if the expression in the condition is of type bool */
+            char *expressionType = getTypeOfExpression($3);
+            if (strcmp(expressionType, "bool") != 0) {
+                char errorMessage[150];
+                sprintf(errorMessage, "Error: Condition of an if statement must be of type bool, but got %s.\n", expressionType);
+                yyerror(errorMessage);
+                YYABORT;
+            }
+
+            /* Push a new symbol table for if statement scope */
+            symbol_table *ifTable = createSymbolTable();
+            pushSymbolTable(ifTable);
+
+            node* if_body_node = createNode("if_body", $5, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting if block scope */
+
+            /* Push a new symbol table for else statement scope */
+            symbol_table *elseTable = createSymbolTable();
+            pushSymbolTable(elseTable);
+
+            node* else_body_node = createNode("else_body", $8, NULL);
+            popSymbolTable(); /* Pop the symbol table after exiting else block scope */
+
+            $$ = createNode("if_else", $3, createNode("if_else_wrapper", if_body_node, else_body_node));
         }
     | IF LPAREN expression RPAREN single_statement ELSE single_statement
         {
@@ -892,7 +982,7 @@ if_statement:
 
 /* Used to parse while loops. */
 while_statement:
-    WHILE LPAREN expression RPAREN LBRACE statements_list RBRACE
+    WHILE LPAREN expression RPAREN LBRACE statements_list_opt RBRACE
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($3);
@@ -936,7 +1026,7 @@ while_statement:
 
 /* Used to parse do-while loops. */
 do_while_statement:
-    DO LBRACE statements_list RBRACE WHILE LPAREN expression RPAREN SEMICOLON
+    DO LBRACE statements_list_opt RBRACE WHILE LPAREN expression RPAREN SEMICOLON
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($7);
@@ -980,7 +1070,7 @@ do_while_statement:
 
 /* Used to parse for loops. */
 for_statement:
-    FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN LBRACE statements_list RBRACE
+    FOR LPAREN expression SEMICOLON expression SEMICOLON expression RPAREN LBRACE statements_list_opt RBRACE
         {
             /* Check if the expression in the condition is of type bool */
             char *expressionType = getTypeOfExpression($5);
