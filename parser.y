@@ -1777,7 +1777,7 @@ char* checkBinaryOperationType(node *left, node *right, char *operation) {
             return "bool";
         } else {
             char errorMessage[100];
-            sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type bool, but got '%s' and '%s'", leftType, rightType);
+            sprintf(errorMessage, "Error: Invalid types for operation '%s'. Operands must be of type bool, but got '%s' and '%s'" ,operation, leftType, rightType);
             yyerror(errorMessage);
             return NULL;
         }
@@ -1791,7 +1791,7 @@ char* checkBinaryOperationType(node *left, node *right, char *operation) {
             return "bool";
         } else {
             char errorMessage[100];
-            sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of type int or real, but got '%s' and '%s'", leftType, rightType);
+            sprintf(errorMessage, "Error: Invalid types for operation '%s'. Operands must be of type int or real, but got '%s' and '%s'" ,operation, leftType, rightType);
             yyerror(errorMessage);
             return NULL;
         }
@@ -1808,7 +1808,7 @@ char* checkBinaryOperationType(node *left, node *right, char *operation) {
                 return "bool";
             }
             char errorMessage[150];
-            sprintf(errorMessage, "Error: Invalid types for operation. Operands must be of the same type or compatible pointer types, but got '%s' and '%s'", leftType, rightType);
+            sprintf(errorMessage, "Error: Invalid types for operation '%s'. Operands must be of the same type or compatible pointer types, but got '%s' and '%s'" ,operation, leftType, rightType);
             yyerror(errorMessage);
             return NULL;
         }
@@ -1836,7 +1836,9 @@ char* checkBinaryOperationType(node *left, node *right, char *operation) {
 
 
     // Catch-all for unsupported operations
-    yyerror("Error: Unsupported operation: %s", operation);
+    char errorMsg[256];
+    sprintf(errorMsg, "Error: Unsupported operation: %s", operation);
+    yyerror(errorMsg);
     return NULL;
 }
 
@@ -1998,7 +2000,16 @@ char* getTypeOfExpression(node* expr) {
             if (leftType == NULL || rightType == NULL) {
                 return NULL; // Error message would have been printed already
             }
-
+            if ((strcmp(leftType, "real") == 0 && strcmp(rightType, "int") == 0) ||
+                (strcmp(leftType, "int") == 0 && strcmp(rightType, "real") == 0)) {
+                // In this case, if either operand is 'real', result will be 'real'.
+                if (strcmp(expr->token, "<") == 0 || strcmp(expr->token, ">") == 0 ||
+                    strcmp(expr->token, "==") == 0 || strcmp(expr->token, "!=") == 0 ||
+                    strcmp(expr->token, ">=") == 0 || strcmp(expr->token, "<=") == 0) {
+                    return "bool";
+                }
+                return "real";
+            }
             if (strcmp(leftType, rightType) != 0) {
                 yyerror("Type mismatch in binary operation: %s %s", leftType, rightType);
                 return NULL;
